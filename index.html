@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>EGE Navigator · FIPI · DreamTeam English</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <a class="brand-logo-link" href="https://vk.ru/dreamteamenglish" target="_blank" rel="noopener noreferrer" aria-label="Копилочка Английского — VK">
+        <img id="brandLogo" class="brand-logo" src="assets/brand-logo.png" alt="Копилочка Английского">
+      </a>
+      <div>
+        <div class="eyebrow">DREAMTEAM ENGLISH · TEACHER WORKSPACE</div>
+        <h1>EGE Navigator</h1>
+        <p>Тематический навигатор по открытому банку заданий ЕГЭ ФИПИ · English</p>
+      </div>
+    </div>
+
+    <div class="auth-area">
+      <span id="sourceBadge" class="cloud-badge">FIPI</span>
+      <span id="cloudBadge" class="cloud-badge protected">PROTECTED</span>
+      <button id="adminButton" class="button secondary hidden" type="button">⚙ ADMIN</button>
+      <button id="signOutButton" class="button ghost hidden" type="button">Выйти</button>
+    </div>
+  </header>
+
+  <section id="accessGate" class="access-gate">
+    <div class="access-card">
+      <span class="gold-kicker">PROTECTED NAVIGATOR · EGE</span>
+      <h2>Тематический поиск по заданиям ЕГЭ ФИПИ</h2>
+      <p>
+        Полный каталог доступен приглашённым пользователям и участникам VK Donut.
+        Для знакомства с Navigator предусмотрен отдельный DEMO-режим.
+      </p>
+
+      <div id="accessMessage" class="access-message hidden"></div>
+
+      <div class="access-actions">
+        <button id="openLoginButton" class="button primary access-main-button" type="button">Войти</button>
+        <button id="openDonutButton" class="button secondary access-main-button" type="button">Войти через VK Donut</button>
+        <button id="openDemoButton" class="button ghost access-main-button" type="button">Попробовать DEMO</button>
+      </div>
+
+      <p class="access-note">
+        Самостоятельная email-регистрация отключена. Полный доступ выдаётся администратором
+        или после серверной проверки VK Donut.
+      </p>
+
+      <a class="admin-contact-link"
+         href="https://vk.ru/im?sel=-229391051"
+         target="_blank"
+         rel="noopener noreferrer"
+         data-admin-contact>
+        ✉ Нужен доступ? Напишите администратору
+      </a>
+    </div>
+  </section>
+
+  <main id="appShell" class="app-shell hidden">
+    <section class="hero-card">
+      <div class="hero-copy">
+        <span id="modeKicker" class="gold-kicker">FULL CATALOG</span>
+        <h2>Открытый банк ЕГЭ — в одной рабочей карте</h2>
+        <p>
+          Выберите раздел экзамена, найдите нужное задание и откройте официальный источник ФИПИ.
+          Групповые задания сохраняются как единый unit.
+        </p>
+      </div>
+      <div class="hero-stats">
+        <div class="stat"><strong id="unitCount">—</strong><span>units</span></div>
+        <div class="stat"><strong id="itemCount">—</strong><span>заданий</span></div>
+        <div class="stat"><strong id="visibleCount">—</strong><span>показано</span></div>
+      </div>
+    </section>
+
+    <section class="toolbar-card">
+      <div class="filter-grid">
+        <label>
+          <span>Раздел ЕГЭ</span>
+          <select id="bucketSelect"></select>
+        </label>
+        <label class="search-label">
+          <span>Поиск</span>
+          <input id="searchInput" type="search" placeholder="текст задания, ID ФИПИ, заголовок…">
+        </label>
+        <button id="resetButton" class="button ghost" type="button">Сбросить</button>
+      </div>
+    </section>
+
+    <section class="section-head">
+      <div>
+        <span class="eyebrow">EXAM BUCKET</span>
+        <h3 id="sectionTitle">Все разделы</h3>
+      </div>
+      <div id="sectionMeta" class="section-meta"></div>
+    </section>
+
+    <section id="unitGrid" class="unit-grid"></section>
+
+    <div id="emptyState" class="empty-state hidden">
+      <strong>Ничего не найдено</strong>
+      <span>Попробуйте изменить раздел или строку поиска.</span>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <span>Тематический навигатор по открытому банку заданий ЕГЭ ФИПИ · English</span>
+    <span>© <span id="footerYear"></span> · <a href="https://vk.ru/dreamteamenglish" target="_blank" rel="noopener noreferrer">Копилочка Английского</a></span>
+  </footer>
+
+  <dialog id="authDialog" class="dialog-shell">
+    <div class="dialog-card">
+      <button id="closeAuthDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+      <span class="gold-kicker">INVITE ACCESS</span>
+      <h3>Вход по приглашению</h3>
+      <p id="authHint">Введите email и пароль приглашённого аккаунта.</p>
+      <label>
+        <span>Email</span>
+        <input id="emailInput" type="email" autocomplete="username">
+      </label>
+      <label>
+        <span>Пароль</span>
+        <input id="passwordInput" type="password" autocomplete="current-password">
+      </label>
+      <div id="authError" class="auth-error hidden"></div>
+      <button id="signInButton" class="button primary wide" type="button">Войти</button>
+    </div>
+  </dialog>
+
+  <dialog id="infoDialog" class="dialog-shell">
+    <div class="dialog-card">
+      <button id="closeInfoDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+      <span id="infoKicker" class="gold-kicker">NEXT STEP</span>
+      <h3 id="infoTitle">Подключение</h3>
+      <p id="infoText"></p>
+      <button id="closeInfoButton" class="button primary wide" type="button">Понятно</button>
+    </div>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
