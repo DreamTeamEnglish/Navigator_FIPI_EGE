@@ -44,6 +44,14 @@
   let linksByUnit = new Map();
   let itemStatus = new Map();
 
+  let adminUsers = [];
+  let adminOnline = [];
+  let adminActiveTab = 'participants';
+  let editingPrincipalKey = null;
+  let presenceTimer = null;
+  let adminRefreshTimer = null;
+  let toastTimer = null;
+
   const $ = (s) => document.querySelector(s);
   const el = {
     accessGate: $('#accessGate'),
@@ -93,6 +101,38 @@
     infoKicker: $('#infoKicker'),
     infoTitle: $('#infoTitle'),
     infoText: $('#infoText'),
+
+    adminDialog: $('#adminDialog'),
+    closeAdminDialogButton: $('#closeAdminDialogButton'),
+    refreshAdminButton: $('#refreshAdminButton'),
+    participantsTabButton: $('#participantsTabButton'),
+    onlineTabButton: $('#onlineTabButton'),
+    participantsCountBadge: $('#participantsCountBadge'),
+    onlineCountBadge: $('#onlineCountBadge'),
+    participantsPanel: $('#participantsPanel'),
+    onlinePanel: $('#onlinePanel'),
+    participantsList: $('#participantsList'),
+    onlineList: $('#onlineList'),
+
+    accessEditorDialog: $('#accessEditorDialog'),
+    closeAccessEditorButton: $('#closeAccessEditorButton'),
+    cancelAccessEditorButton: $('#cancelAccessEditorButton'),
+    saveAccessEditorButton: $('#saveAccessEditorButton'),
+    accessEditorTitle: $('#accessEditorTitle'),
+    accessEditorMeta: $('#accessEditorMeta'),
+    accessStatusSelect: $('#accessStatusSelect'),
+    accessLevelSelect: $('#accessLevelSelect'),
+    accessExpiryPreset: $('#accessExpiryPreset'),
+    accessCustomDateLabel: $('#accessCustomDateLabel'),
+    accessCustomDate: $('#accessCustomDate'),
+    accessCurrentExpiry: $('#accessCurrentExpiry'),
+
+    historyDialog: $('#historyDialog'),
+    closeHistoryDialogButton: $('#closeHistoryDialogButton'),
+    historyTitle: $('#historyTitle'),
+    historyList: $('#historyList'),
+
+    toast: $('#toast'),
   };
 
   function configuredKey() {
@@ -142,6 +182,371 @@
     if (/email not confirmed/i.test(m)) return 'Email ещё не подтверждён.';
     if (/rate limit/i.test(m)) return 'Слишком много попыток. Попробуйте немного позже.';
     return m || 'Не удалось выполнить вход.';
+  }
+
+
+  function formatDateTime(value) {
+    if (!value) return '—';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '—';
+    return new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    }).format(d);
+  }
+
+  function formatDate(value) {
+    if (!value) return '—';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '—';
+    return new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit', month: '2-digit', year: 'numeric'
+    }).format(d);
+  }
+
+  function showToast(text) {
+    clearTimeout(toastTimer);
+    el.toast.textContent = text;
+    el.toast.classList.remove('hidden');
+    toastTimer = setTimeout(() => el.toast.classList.add('hidden'), 2600);
+  }
+
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {}
+    try {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly','');
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      area.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
+  function accessSourceLabel(source) {
+    if (source === 'donut') return 'VK DONUT';
+    if (source === 'invite') return 'INVITE';
+    if (source === 'admin') return 'ADMIN';
+    return String(source || '—').toUpperCase();
+  }
+
+  function sessionKindLabel(kind) {
+    return kind === 'vk_donut' ? 'VK Donut' : 'Email';
+  }
+
+  function userDisplayName(row) {
+    return row.display_name || row.email || (row.vk_user_id ? `VK ID ${row.vk_user_id}` : row.principal_key);
+  }
+
+  function accessChip(value, extra = '') {
+    return `<span class="admin-chip ${esc(extra || String(value || '').toLowerCase())}">${esc(String(value || '—').toUpperCase())}</span>`;
+  }
+
+  async function touchPresence() {
+    if (!supabaseClient || !currentUser) return;
+    try {
+      const { error } = await supabaseClient.rpc('ege_touch_presence');
+      if (error) console.warn('EGE presence heartbeat:', error.message || error);
+    } catch (error) {
+      console.warn('EGE presence heartbeat:', error);
+    }
+  }
+
+  function stopPresenceHeartbeat() {
+    if (presenceTimer) clearInterval(presenceTimer);
+    presenceTimer = null;
+  }
+
+  function startPresenceHeartbeat() {
+    stopPresenceHeartbeat();
+    void touchPresence();
+    presenceTimer = setInterval(() => {
+      if (document.visibilityState === 'visible' && currentUser) void touchPresence();
+    }, 60000);
+  }
+
+  function stopAdminAutoRefresh() {
+    if (adminRefreshTimer) clearInterval(adminRefreshTimer);
+    adminRefreshTimer = null;
+  }
+
+  function startAdminAutoRefresh() {
+    stopAdminAutoRefresh();
+    adminRefreshTimer = setInterval(() => {
+      if (el.adminDialog.open && adminActiveTab === 'online') void refreshAdminOnline();
+    }, 60000);
+  }
+
+  function setAdminTab(tab) {
+    adminActiveTab = tab === 'online' ? 'online' : 'participants';
+    const online = adminActiveTab === 'online';
+    el.participantsTabButton.classList.toggle('active', !online);
+    el.onlineTabButton.classList.toggle('active', online);
+    el.participantsPanel.classList.toggle('hidden', online);
+    el.onlinePanel.classList.toggle('hidden', !online);
+    if (online) void refreshAdminOnline();
+  }
+
+  function participantCard(row) {
+    const entered = Boolean(row.first_seen_at);
+    const donutSession = row.active_donut_session_until
+      ? `<div>Donut-сессия: <strong>до ${esc(formatDateTime(row.active_donut_session_until))}</strong></div>`
+      : '';
+    const donutCheck = row.last_donut_check_at
+      ? `<div>Donut-проверка: <strong>${esc(formatDateTime(row.last_donut_check_at))}${row.last_donut_active === true ? ' · активен' : ''}</strong></div>`
+      : '';
+
+    const quickLabel = row.status === 'blocked' ? 'Разблокировать' : 'Блокировать';
+    const quickClass = row.status === 'blocked' ? '' : ' danger';
+
+    return `
+      <article class="admin-user-card" data-principal="${esc(row.principal_key)}">
+        <div class="admin-user-main">
+          <div class="admin-user-name" title="${esc(userDisplayName(row))}">${esc(userDisplayName(row))}</div>
+          <div class="admin-user-id">${esc(row.principal_key)}</div>
+          <div class="admin-user-chips">
+            ${accessChip(row.identity_type)}
+            ${accessChip(accessSourceLabel(row.access_source))}
+            ${accessChip(row.access_level)}
+            ${accessChip(row.status)}
+            ${!entered ? '<span class="admin-chip pending">ЕЩЁ НЕ ВХОДИЛ</span>' : ''}
+          </div>
+        </div>
+
+        <div class="admin-user-info">
+          <div>Первый вход: <strong>${esc(formatDateTime(row.first_seen_at))}</strong></div>
+          <div>Последний вход: <strong>${esc(formatDateTime(row.last_seen_at))}</strong></div>
+          <div>Входов: <strong>${esc(row.login_count ?? 0)}</strong></div>
+        </div>
+
+        <div class="admin-user-info">
+          <div>Доступ до: <strong>${esc(row.access_expires_at ? formatDateTime(row.access_expires_at) : 'бессрочно')}</strong></div>
+          ${donutCheck}
+          ${donutSession}
+        </div>
+
+        <div class="admin-user-actions">
+          <button class="admin-mini-button" type="button" data-history="${esc(row.principal_key)}">Входы</button>
+          <button class="admin-mini-button" type="button" data-edit-access="${esc(row.principal_key)}">Изменить</button>
+          <button class="admin-mini-button${quickClass}" type="button" data-quick-status="${esc(row.principal_key)}">${esc(quickLabel)}</button>
+        </div>
+      </article>
+    `;
+  }
+
+  function onlineCard(row) {
+    return `
+      <article class="admin-user-card online-now">
+        <div class="admin-user-main">
+          <div class="admin-user-name">${esc(userDisplayName(row))}</div>
+          <div class="admin-user-id">${esc(row.principal_key)}</div>
+          <div class="admin-user-chips">
+            ${accessChip(sessionKindLabel(row.session_kind))}
+            ${accessChip(accessSourceLabel(row.access_source))}
+            ${accessChip(row.access_level)}
+            ${accessChip(row.status)}
+          </div>
+        </div>
+
+        <div class="admin-user-info">
+          <div>Сессия началась: <strong>${esc(formatDateTime(row.session_started_at))}</strong></div>
+          <div>Последняя активность: <strong>${esc(formatDateTime(row.presence_last_seen_at))}</strong></div>
+        </div>
+
+        <div class="admin-user-info">
+          <div>Всего входов: <strong>${esc(row.login_count ?? 0)}</strong></div>
+          <div>Последний вход: <strong>${esc(formatDateTime(row.last_login_at))}</strong></div>
+          ${row.active_donut_session_until ? `<div>Donut до: <strong>${esc(formatDateTime(row.active_donut_session_until))}</strong></div>` : ''}
+        </div>
+
+        <div class="admin-user-actions">
+          <button class="admin-mini-button" type="button" data-history="${esc(row.principal_key)}">Входы</button>
+        </div>
+      </article>
+    `;
+  }
+
+  function bindAdminListActions(root) {
+    root.querySelectorAll('[data-edit-access]').forEach(btn => {
+      btn.addEventListener('click', () => openAccessEditor(btn.dataset.editAccess));
+    });
+    root.querySelectorAll('[data-quick-status]').forEach(btn => {
+      btn.addEventListener('click', () => quickToggleStatus(btn.dataset.quickStatus));
+    });
+    root.querySelectorAll('[data-history]').forEach(btn => {
+      btn.addEventListener('click', () => openLoginHistory(btn.dataset.history));
+    });
+  }
+
+  function renderAdminParticipants() {
+    el.participantsCountBadge.textContent = String(adminUsers.length);
+    el.participantsList.innerHTML = adminUsers.length
+      ? adminUsers.map(participantCard).join('')
+      : '<div class="admin-empty">В EGE пока нет пользователей.</div>';
+    bindAdminListActions(el.participantsList);
+  }
+
+  function renderAdminOnline() {
+    el.onlineCountBadge.textContent = String(adminOnline.length);
+    el.onlineList.innerHTML = adminOnline.length
+      ? adminOnline.map(onlineCard).join('')
+      : '<div class="admin-empty">Сейчас активных пользователей не видно.</div>';
+    bindAdminListActions(el.onlineList);
+  }
+
+  async function refreshAdminParticipants() {
+    if (currentAccess?.role !== 'admin') return;
+    const { data, error } = await supabaseClient.rpc('ege_admin_user_directory');
+    if (error) throw error;
+    adminUsers = data || [];
+    renderAdminParticipants();
+  }
+
+  async function refreshAdminOnline() {
+    if (currentAccess?.role !== 'admin') return;
+    const { data, error } = await supabaseClient.rpc('ege_admin_online_directory', { p_window_minutes: 3 });
+    if (error) throw error;
+    adminOnline = data || [];
+    renderAdminOnline();
+  }
+
+  async function refreshAdminPanel() {
+    el.refreshAdminButton.disabled = true;
+    try {
+      await Promise.all([refreshAdminParticipants(), refreshAdminOnline()]);
+    } catch (error) {
+      console.error('Admin panel refresh failed:', error);
+      showToast('Не удалось обновить ADMIN.');
+    } finally {
+      el.refreshAdminButton.disabled = false;
+    }
+  }
+
+  async function openAdminPanel() {
+    if (currentAccess?.role !== 'admin') return;
+    setAdminTab('participants');
+    if (typeof el.adminDialog.showModal === 'function') el.adminDialog.showModal();
+    startAdminAutoRefresh();
+    await refreshAdminPanel();
+  }
+
+  function closeAdminPanel() {
+    stopAdminAutoRefresh();
+    if (el.adminDialog.open) el.adminDialog.close();
+  }
+
+  function openAccessEditor(principalKey) {
+    const row = adminUsers.find(x => x.principal_key === principalKey);
+    if (!row) return;
+    editingPrincipalKey = principalKey;
+    el.accessEditorTitle.textContent = userDisplayName(row);
+    el.accessEditorMeta.textContent = `${row.principal_key} · ${accessSourceLabel(row.access_source)}`;
+    el.accessStatusSelect.value = row.status;
+    el.accessLevelSelect.value = row.access_level;
+    el.accessExpiryPreset.value = 'keep';
+    el.accessCustomDate.value = '';
+    el.accessCustomDateLabel.classList.add('hidden');
+    el.accessCurrentExpiry.textContent = row.access_expires_at ? formatDateTime(row.access_expires_at) : 'бессрочно';
+    if (typeof el.accessEditorDialog.showModal === 'function') el.accessEditorDialog.showModal();
+  }
+
+  function resolveEditorExpiry(row) {
+    const preset = el.accessExpiryPreset.value;
+    if (preset === 'keep') return row.access_expires_at || null;
+    if (preset === 'none') return null;
+    if (preset === 'custom') {
+      if (!el.accessCustomDate.value) throw new Error('Выберите дату окончания доступа.');
+      const [y,m,d] = el.accessCustomDate.value.split('-').map(Number);
+      return new Date(y,m-1,d,23,59,59,999).toISOString();
+    }
+    const days = Number(preset);
+    if (![1,3,7].includes(days)) throw new Error('Некорректный срок.');
+    return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  async function saveAccessEditor() {
+    const row = adminUsers.find(x => x.principal_key === editingPrincipalKey);
+    if (!row) return;
+    el.saveAccessEditorButton.disabled = true;
+    try {
+      const expiry = resolveEditorExpiry(row);
+      const { error } = await supabaseClient.rpc('ege_admin_set_principal_access', {
+        p_principal_key: row.principal_key,
+        p_status: el.accessStatusSelect.value,
+        p_access_level: el.accessLevelSelect.value,
+        p_access_expires_at: expiry,
+        p_note: null
+      });
+      if (error) throw error;
+      el.accessEditorDialog.close();
+      editingPrincipalKey = null;
+      await refreshAdminPanel();
+      showToast('✓ Доступ обновлён');
+    } catch (error) {
+      console.error(error);
+      showToast(error?.message || 'Не удалось изменить доступ.');
+    } finally {
+      el.saveAccessEditorButton.disabled = false;
+    }
+  }
+
+  async function quickToggleStatus(principalKey) {
+    const row = adminUsers.find(x => x.principal_key === principalKey);
+    if (!row) return;
+    const next = row.status === 'blocked' ? 'active' : 'blocked';
+    try {
+      const { error } = await supabaseClient.rpc('ege_admin_set_principal_access', {
+        p_principal_key: row.principal_key,
+        p_status: next,
+        p_access_level: row.access_level,
+        p_access_expires_at: row.access_expires_at,
+        p_note: null
+      });
+      if (error) throw error;
+      await refreshAdminPanel();
+      showToast(next === 'blocked' ? 'Пользователь заблокирован' : 'Пользователь разблокирован');
+    } catch (error) {
+      console.error(error);
+      showToast(error?.message || 'Не удалось изменить статус.');
+    }
+  }
+
+  async function openLoginHistory(principalKey) {
+    const row = adminUsers.find(x => x.principal_key === principalKey) ||
+                adminOnline.find(x => x.principal_key === principalKey);
+    el.historyTitle.textContent = `Входы · ${userDisplayName(row || { principal_key: principalKey })}`;
+    el.historyList.innerHTML = '<div class="admin-empty">Загружаю…</div>';
+    if (typeof el.historyDialog.showModal === 'function') el.historyDialog.showModal();
+
+    try {
+      const { data, error } = await supabaseClient.rpc('ege_admin_login_history', {
+        p_principal_key: principalKey,
+        p_limit: 100
+      });
+      if (error) throw error;
+      const rows = data || [];
+      el.historyList.innerHTML = rows.length
+        ? rows.map(x => `
+            <div class="history-row">
+              <span class="history-method">${esc(x.login_method === 'vk_donut' ? 'VK Donut' : 'Email')}</span>
+              <span class="history-time">${esc(formatDateTime(x.created_at))}</span>
+            </div>
+          `).join('')
+        : '<div class="admin-empty">Успешных входов ещё нет.</div>';
+    } catch (error) {
+      el.historyList.innerHTML = `<div class="admin-empty">${esc(error?.message || 'Ошибка загрузки истории.')}</div>`;
+    }
   }
 
   function updateSourceBadge() {
@@ -639,9 +1044,13 @@
     el.modeKicker.textContent = access.role === 'admin'
       ? 'ADMIN · TOPIC-FIRST · 15 EXAM BUCKETS'
       : 'TOPIC-FIRST · 15 EXAM BUCKETS';
+    startPresenceHeartbeat();
   }
 
   function leaveApp() {
+    stopPresenceHeartbeat();
+    stopAdminAutoRefresh();
+
     currentAccess = null;
     units = [];
     items = [];
@@ -717,6 +1126,7 @@
       enterApp(access);
       await loadRuntimeConfig();
       await loadCatalog();
+      await touchPresence();
     } catch (e) {
       console.error(e);
       leaveApp();
@@ -844,16 +1254,13 @@
     );
   });
 
-  el.adminButton.addEventListener('click', () => {
-    showInfo(
-      'ADMIN подтверждён',
-      `Администратор распознан. Текущий источник: ${runtimeConfig.content_source === 'fipi' ? 'FIPI' : 'Яндекс-резерв'}. Полная админ-панель подключается отдельным этапом.`,
-      'ADMIN'
-    );
-  });
+  el.adminButton.addEventListener('click', openAdminPanel);
 
   el.signOutButton.addEventListener('click', async () => {
-    if (supabaseClient) await supabaseClient.auth.signOut();
+    if (supabaseClient && currentUser) {
+      try { await supabaseClient.rpc('ege_clear_presence'); } catch {}
+      await supabaseClient.auth.signOut();
+    }
     currentUser = null;
     leaveApp();
     clearMessage();
@@ -876,12 +1283,36 @@
   el.closeInfoButton.addEventListener('click', () => el.infoDialog.close());
 
   document.querySelectorAll('[data-admin-contact]').forEach(link => {
-    link.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(CONTACT_TEXT); } catch {}
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      const href = link.href;
+      window.open(href, '_blank', 'noopener,noreferrer');
+      void copyText(CONTACT_TEXT).then(ok => {
+        showToast(ok
+          ? '✓ Текст сообщения про ЕГЭ скопирован'
+          : 'Открылся VK. Текст не удалось скопировать автоматически.');
+      });
     });
   });
 
-  document.addEventListener('visibilitychange', refreshStatusesWhenVisible);
+  el.closeAdminDialogButton.addEventListener('click', closeAdminPanel);
+  el.refreshAdminButton.addEventListener('click', refreshAdminPanel);
+  el.participantsTabButton.addEventListener('click', () => setAdminTab('participants'));
+  el.onlineTabButton.addEventListener('click', () => setAdminTab('online'));
+
+  el.closeAccessEditorButton.addEventListener('click', () => el.accessEditorDialog.close());
+  el.cancelAccessEditorButton.addEventListener('click', () => el.accessEditorDialog.close());
+  el.saveAccessEditorButton.addEventListener('click', saveAccessEditor);
+  el.accessExpiryPreset.addEventListener('change', () => {
+    el.accessCustomDateLabel.classList.toggle('hidden', el.accessExpiryPreset.value !== 'custom');
+  });
+
+  el.closeHistoryDialogButton.addEventListener('click', () => el.historyDialog.close());
+
+  document.addEventListener('visibilitychange', () => {
+    refreshStatusesWhenVisible();
+    if (document.visibilityState === 'visible' && currentUser) void touchPresence();
+  });
 
   init();
 })();

@@ -162,6 +162,111 @@
     </div>
   </dialog>
 
+  <dialog id="adminDialog" class="dialog-shell admin-dialog-shell">
+    <div class="dialog-card admin-dialog-card">
+      <button id="closeAdminDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+
+      <div class="admin-dialog-head">
+        <div>
+          <span class="gold-kicker">EGE ADMIN</span>
+          <h3>Участники и активные сессии</h3>
+          <p>Постоянный реестр отдельно от тех, кто находится в Navigator прямо сейчас.</p>
+        </div>
+        <button id="refreshAdminButton" class="button ghost" type="button">↻ Обновить</button>
+      </div>
+
+      <div class="admin-tabs" role="tablist">
+        <button id="participantsTabButton" class="admin-tab active" type="button" data-admin-tab="participants">
+          Участники <span id="participantsCountBadge">0</span>
+        </button>
+        <button id="onlineTabButton" class="admin-tab" type="button" data-admin-tab="online">
+          Сейчас онлайн <span id="onlineCountBadge">0</span>
+        </button>
+      </div>
+
+      <section id="participantsPanel" class="admin-panel">
+        <div class="admin-panel-note">
+          Здесь остаются все пользователи EGE: входившие хотя бы раз и приглашённые, которые ещё не входили.
+        </div>
+        <div id="participantsList" class="admin-user-list"></div>
+      </section>
+
+      <section id="onlinePanel" class="admin-panel hidden">
+        <div class="admin-panel-note">
+          «Онлайн» = активность за последние 3 минуты. Email-вход отмечается heartbeat Navigator;
+          VK Donut будет попадать сюда через серверную Donut-сессию.
+        </div>
+        <div id="onlineList" class="admin-user-list"></div>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog id="accessEditorDialog" class="dialog-shell access-editor-shell">
+    <div class="dialog-card">
+      <button id="closeAccessEditorButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+      <span class="gold-kicker">ACCESS CONTROL</span>
+      <h3 id="accessEditorTitle">Доступ пользователя</h3>
+      <p id="accessEditorMeta" class="access-editor-meta"></p>
+
+      <div class="access-editor-grid">
+        <label>
+          <span>Статус</span>
+          <select id="accessStatusSelect">
+            <option value="active">ACTIVE</option>
+            <option value="blocked">BLOCKED</option>
+            <option value="pending">PENDING</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Уровень</span>
+          <select id="accessLevelSelect">
+            <option value="full">FULL · полный каталог</option>
+            <option value="demo">DEMO · ограниченный доступ</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Срок</span>
+          <select id="accessExpiryPreset">
+            <option value="keep">Не менять</option>
+            <option value="none">Бессрочно</option>
+            <option value="1">+ 1 день</option>
+            <option value="3">+ 3 дня</option>
+            <option value="7">+ 7 дней</option>
+            <option value="custom">Своя дата</option>
+          </select>
+        </label>
+
+        <label id="accessCustomDateLabel" class="hidden">
+          <span>Доступ до конца дня</span>
+          <input id="accessCustomDate" type="date">
+        </label>
+      </div>
+
+      <div class="access-editor-current">
+        <span>Текущий срок:</span>
+        <strong id="accessCurrentExpiry">—</strong>
+      </div>
+
+      <div class="access-editor-actions">
+        <button id="cancelAccessEditorButton" class="button ghost" type="button">Отмена</button>
+        <button id="saveAccessEditorButton" class="button primary" type="button">Сохранить</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="historyDialog" class="dialog-shell history-dialog-shell">
+    <div class="dialog-card">
+      <button id="closeHistoryDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+      <span class="gold-kicker">LOGIN HISTORY</span>
+      <h3 id="historyTitle">История входов</h3>
+      <div id="historyList" class="history-list"></div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
   <script src="app.js"></script>
