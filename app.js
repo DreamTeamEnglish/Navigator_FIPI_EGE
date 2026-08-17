@@ -307,11 +307,27 @@
       ? `<div>Donut-проверка: <strong>${esc(formatDateTime(row.last_donut_check_at))}${row.last_donut_active === true ? ' · активен' : ''}</strong></div>`
       : '';
 
+    const isSelfAdmin = Boolean(
+      currentAccess?.role === 'admin' &&
+      row.principal_key === currentPrincipalKey()
+    );
+
     const quickLabel = row.status === 'blocked' ? 'Разблокировать' : 'Блокировать';
     const quickClass = row.status === 'blocked' ? '' : ' danger';
 
+    const adminActions = isSelfAdmin
+      ? `
+          <button class="admin-mini-button" type="button" data-history="${esc(row.principal_key)}">Входы</button>
+          <span class="self-admin-lock" title="Текущий ADMIN защищён от блокировки и изменения собственного доступа">👑 Вы · ADMIN</span>
+        `
+      : `
+          <button class="admin-mini-button" type="button" data-history="${esc(row.principal_key)}">Входы</button>
+          <button class="admin-mini-button" type="button" data-edit-access="${esc(row.principal_key)}">Изменить</button>
+          <button class="admin-mini-button${quickClass}" type="button" data-quick-status="${esc(row.principal_key)}">${esc(quickLabel)}</button>
+        `;
+
     return `
-      <article class="admin-user-card" data-principal="${esc(row.principal_key)}">
+      <article class="admin-user-card${isSelfAdmin ? ' self-admin-card' : ''}" data-principal="${esc(row.principal_key)}">
         <div class="admin-user-main">
           <div class="admin-user-name" title="${esc(userDisplayName(row))}">${esc(userDisplayName(row))}</div>
           <div class="admin-user-id">${esc(row.principal_key)}</div>
@@ -320,6 +336,7 @@
             ${accessChip(accessSourceLabel(row.access_source))}
             ${accessChip(row.access_level)}
             ${accessChip(row.status)}
+            ${isSelfAdmin ? '<span class="admin-chip self">CURRENT ADMIN</span>' : ''}
             ${!entered ? '<span class="admin-chip pending">ЕЩЁ НЕ ВХОДИЛ</span>' : ''}
           </div>
         </div>
@@ -337,9 +354,7 @@
         </div>
 
         <div class="admin-user-actions">
-          <button class="admin-mini-button" type="button" data-history="${esc(row.principal_key)}">Входы</button>
-          <button class="admin-mini-button" type="button" data-edit-access="${esc(row.principal_key)}">Изменить</button>
-          <button class="admin-mini-button${quickClass}" type="button" data-quick-status="${esc(row.principal_key)}">${esc(quickLabel)}</button>
+          ${adminActions}
         </div>
       </article>
     `;

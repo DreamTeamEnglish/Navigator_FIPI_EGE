@@ -931,3 +931,29 @@ select option { background: #062b20; color: #effbf7; }
   .admin-user-card { grid-template-columns: 1fr; }
   .access-editor-grid { grid-template-columns: 1fr; }
 }
+
+
+/* v0.3.2 — current ADMIN row is visibly protected */
+.admin-user-card.self-admin-card {
+  border-color: rgba(217,175,74,.34);
+  background:
+    linear-gradient(90deg, rgba(217,175,74,.055), rgba(255,255,255,.025));
+}
+.admin-chip.self {
+  color: #f6dfa1;
+  border-color: rgba(217,175,74,.34);
+  background: rgba(217,175,74,.10);
+}
+.self-admin-lock {
+  min-height: 31px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(217,175,74,.32);
+  background: rgba(217,175,74,.08);
+  color: #f2d98e;
+  font-size: 9px;
+  font-weight: 850;
+  white-space: nowrap;
+}
