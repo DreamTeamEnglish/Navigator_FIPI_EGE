@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
   <title>EGE Navigator · FIPI · DreamTeam English</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -16,7 +16,7 @@
       <a class="brand-logo-link" href="https://vk.ru/dreamteamenglish" target="_blank" rel="noopener noreferrer" aria-label="Копилочка Английского — VK">
         <img id="brandLogo" class="brand-logo" src="assets/brand-logo.png" alt="Копилочка Английского">
       </a>
-      <div>
+      <div class="brand-copy">
         <div class="eyebrow">DREAMTEAM ENGLISH · TEACHER WORKSPACE</div>
         <h1>EGE Navigator</h1>
         <p>Тематический навигатор по открытому банку заданий ЕГЭ ФИПИ · English</p>
@@ -24,7 +24,7 @@
     </div>
 
     <div class="auth-area">
-      <span id="sourceBadge" class="cloud-badge">FIPI</span>
+      <span id="sourceBadge" class="cloud-badge source">FIPI</span>
       <span id="cloudBadge" class="cloud-badge protected">PROTECTED</span>
       <button id="adminButton" class="button secondary hidden" type="button">⚙ ADMIN</button>
       <button id="signOutButton" class="button ghost hidden" type="button">Выйти</button>
@@ -64,50 +64,68 @@
   </section>
 
   <main id="appShell" class="app-shell hidden">
-    <section class="hero-card">
-      <div class="hero-copy">
-        <span id="modeKicker" class="gold-kicker">FULL CATALOG</span>
-        <h2>Открытый банк ЕГЭ — в одной рабочей карте</h2>
-        <p>
-          Выберите раздел экзамена, найдите нужное задание и откройте официальный источник ФИПИ.
-          Групповые задания сохраняются как единый unit.
-        </p>
+    <section class="control-deck">
+      <div class="deck-head">
+        <div class="deck-copy">
+          <span id="modeKicker" class="gold-kicker">TOPIC-FIRST · 15 EXAM BUCKETS</span>
+          <h2>Выберите тему — и соберите весь урок в одной строке</h2>
+          <p>Тема — главный вход в каталог. Раздел экзамена показывает, где эта тема встречается.</p>
+        </div>
+        <div class="hero-stats" aria-label="Статистика каталога">
+          <div class="stat"><strong id="unitCount">—</strong><span>units</span></div>
+          <div class="stat"><strong id="itemCount">—</strong><span>заданий</span></div>
+          <div class="stat accent"><strong id="visibleCount">—</strong><span>карточек</span></div>
+        </div>
       </div>
-      <div class="hero-stats">
-        <div class="stat"><strong id="unitCount">—</strong><span>units</span></div>
-        <div class="stat"><strong id="itemCount">—</strong><span>заданий</span></div>
-        <div class="stat"><strong id="visibleCount">—</strong><span>показано</span></div>
-      </div>
-    </section>
 
-    <section class="toolbar-card">
       <div class="filter-grid">
+        <label>
+          <span>Тема</span>
+          <select id="topicSelect"></select>
+        </label>
+        <label>
+          <span>Подтема</span>
+          <select id="subtopicSelect"></select>
+        </label>
         <label>
           <span>Раздел ЕГЭ</span>
           <select id="bucketSelect"></select>
         </label>
-        <label class="search-label">
-          <span>Поиск</span>
-          <input id="searchInput" type="search" placeholder="текст задания, ID ФИПИ, заголовок…">
+        <label>
+          <span>Статус</span>
+          <select id="statusSelect">
+            <option value="all">Все</option>
+            <option value="new">Новые</option>
+            <option value="viewed">Просмотренные</option>
+            <option value="used">Использованные</option>
+          </select>
         </label>
-        <button id="resetButton" class="button ghost" type="button">Сбросить</button>
+        <label class="search-label">
+          <span>Быстрый поиск</span>
+          <input id="searchInput" type="search" placeholder="FIPI ID, КЭС, слово…">
+        </label>
+        <button id="resetButton" class="button ghost reset-button" type="button">Сбросить</button>
+      </div>
+
+      <div class="current-row">
+        <div id="currentSelection" class="current-selection"><strong>Сейчас:</strong> Все темы</div>
+        <div id="sectionMeta" class="section-meta">—</div>
       </div>
     </section>
 
-    <section class="section-head">
-      <div>
-        <span class="eyebrow">EXAM BUCKET</span>
-        <h3 id="sectionTitle">Все разделы</h3>
+    <section class="matrix-shell" aria-label="Матрица заданий ЕГЭ">
+      <button id="scrollLeftButton" class="matrix-arrow matrix-arrow-left" type="button" aria-label="Прокрутить матрицу влево">‹</button>
+      <button id="scrollRightButton" class="matrix-arrow matrix-arrow-right" type="button" aria-label="Прокрутить матрицу вправо">›</button>
+
+      <div id="matrixViewport" class="matrix-viewport" tabindex="0">
+        <div id="matrixTrack" class="matrix-track"></div>
+
+        <div id="emptyState" class="empty-state hidden">
+          <strong>Ничего не найдено</strong>
+          <span>Измените тему, подтему, раздел, статус или строку поиска.</span>
+        </div>
       </div>
-      <div id="sectionMeta" class="section-meta"></div>
     </section>
-
-    <section id="unitGrid" class="unit-grid"></section>
-
-    <div id="emptyState" class="empty-state hidden">
-      <strong>Ничего не найдено</strong>
-      <span>Попробуйте изменить раздел или строку поиска.</span>
-    </div>
   </main>
 
   <footer class="site-footer">
@@ -120,7 +138,7 @@
       <button id="closeAuthDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
       <span class="gold-kicker">INVITE ACCESS</span>
       <h3>Вход по приглашению</h3>
-      <p id="authHint">Введите email и пароль приглашённого аккаунта.</p>
+      <p>Введите email и пароль приглашённого аккаунта.</p>
       <label>
         <span>Email</span>
         <input id="emailInput" type="email" autocomplete="username">
@@ -137,8 +155,8 @@
   <dialog id="infoDialog" class="dialog-shell">
     <div class="dialog-card">
       <button id="closeInfoDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
-      <span id="infoKicker" class="gold-kicker">NEXT STEP</span>
-      <h3 id="infoTitle">Подключение</h3>
+      <span id="infoKicker" class="gold-kicker">INFO</span>
+      <h3 id="infoTitle">Navigator</h3>
       <p id="infoText"></p>
       <button id="closeInfoButton" class="button primary wide" type="button">Понятно</button>
     </div>
