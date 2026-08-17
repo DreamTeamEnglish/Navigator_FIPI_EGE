@@ -43,6 +43,11 @@
   let topicById = new Map();
   let linksByUnit = new Map();
   let itemStatus = new Map();
+  let topicOverrides = [];
+  let manualTopicLinks = [];
+  let overrideByUnit = new Map();
+  let manualLinksByUnit = new Map();
+  let editingTopicUnitId = null;
 
   let adminUsers = [];
   let adminOnline = [];
@@ -133,6 +138,17 @@
     historyList: $('#historyList'),
 
     toast: $('#toast'),
+
+    topicEditorDialog: $('#topicEditorDialog'),
+    closeTopicEditorButton: $('#closeTopicEditorButton'),
+    topicEditorTitle: $('#topicEditorTitle'),
+    baseTopicChips: $('#baseTopicChips'),
+    topicOverrideMode: $('#topicOverrideMode'),
+    addManualTopicRowButton: $('#addManualTopicRowButton'),
+    manualTopicRows: $('#manualTopicRows'),
+    topicAdminNote: $('#topicAdminNote'),
+    resetTopicOverrideButton: $('#resetTopicOverrideButton'),
+    saveTopicOverrideButton: $('#saveTopicOverrideButton'),
   };
 
   function configuredKey() {
@@ -605,7 +621,7 @@
   async function loadCatalog() {
     const principal = currentPrincipalKey();
 
-    const [u, i, t, l, s] = await Promise.all([
+    const [u, i, t, l, s, o, m] = await Promise.all([
       fetchAllRows(
         'ege_units',
         'id,unit_key,title,exam_bucket,parent_zid,official_fipi_url,items_total,shared_context',
@@ -633,13 +649,25 @@
             'updated_at',
             { column: 'principal_key', value: principal }
           )
-        : Promise.resolve([])
+        : Promise.resolve([]),
+      fetchAllRows(
+        'ege_unit_topic_overrides',
+        'unit_id,mode,note,updated_at,updated_by',
+        'unit_id'
+      ),
+      fetchAllRows(
+        'ege_unit_topic_manual',
+        'unit_id,topic_id,updated_at,updated_by',
+        'unit_id'
+      )
     ]);
 
     units = u;
     items = i;
     topics = t;
     unitTopicLinks = l;
+    topicOverrides = o;
+    manualTopicLinks = m;
 
     itemsByUnit = new Map();
     for (const item of items) {
@@ -656,6 +684,8 @@
       if (!linksByUnit.has(link.unit_id)) linksByUnit.set(link.unit_id, []);
       linksByUnit.get(link.unit_id).push(link);
     }
+
+    rebuildManualTopicMaps();
 
     itemStatus = new Map(s.map(row => [row.item_id, row.status]));
 
@@ -720,14 +750,71 @@
       BUCKETS.map(b => `<option value="${esc(b.id)}">${esc(b.label)}</option>`).join('');
   }
 
-  function unitTopicRecords(unitId) {
+
+  function rebuildManualTopicMaps() {
+    overrideByUnit = new Map(topicOverrides.map(x => [x.unit_id, x]));
+    manualLinksByUnit = new Map();
+    for (const link of manualTopicLinks) {
+      if (!manualLinksByUnit.has(link.unit_id)) manualLinksByUnit.set(link.unit_id, []);
+      manualLinksByUnit.get(link.unit_id).push(link);
+    }
+  }
+
+  async function refreshManualTopicData() {
+    const [o, m] = await Promise.all([
+      fetchAllRows(
+        'ege_unit_topic_overrides',
+        'unit_id,mode,note,updated_at,updated_by',
+        'unit_id'
+      ),
+      fetchAllRows(
+        'ege_unit_topic_manual',
+        'unit_id,topic_id,updated_at,updated_by',
+        'unit_id'
+      )
+    ]);
+    topicOverrides = o;
+    manualTopicLinks = m;
+    rebuildManualTopicMaps();
+  }
+
+  function baseUnitTopicRecords(unitId) {
     return (linksByUnit.get(unitId) || [])
-      .map(link => ({ link, topic: topicById.get(link.topic_id) }))
+      .map(link => ({ link, topic: topicById.get(link.topic_id), origin: 'base' }))
       .filter(x => x.topic);
   }
 
+  function manualUnitTopicRecords(unitId) {
+    return (manualLinksByUnit.get(unitId) || [])
+      .map(link => ({ link, topic: topicById.get(link.topic_id), origin: 'manual' }))
+      .filter(x => x.topic);
+  }
+
+  function effectiveUnitTopicRecords(unitId) {
+    const base = baseUnitTopicRecords(unitId);
+    const override = overrideByUnit.get(unitId);
+    if (!override) return base;
+
+    const manual = manualUnitTopicRecords(unitId);
+    const merged = override.mode === 'replace' ? manual : [...base, ...manual];
+    const seen = new Set();
+    return merged.filter(x => {
+      if (seen.has(x.topic.id)) return false;
+      seen.add(x.topic.id);
+      return true;
+    });
+  }
+
+  function hasTopicOverride(unitId) {
+    return overrideByUnit.has(unitId);
+  }
+
+  function unitTopicRecords(unitId) {
+    return effectiveUnitTopicRecords(unitId);
+  }
+
   function unitTopicIdSet(unitId) {
-    return new Set((linksByUnit.get(unitId) || []).map(x => x.topic_id));
+    return new Set(effectiveUnitTopicRecords(unitId).map(x => x.topic.id));
   }
 
   function statusRank(status) {
@@ -874,7 +961,13 @@
                aria-label="Открыть ${esc(unitReference(unit))}">
         <div class="card-top">
           <span class="fipi-ref" title="${esc(unit.unit_key)}">${esc(unitReference(unit))}</span>
-          <span class="unit-count-badge">${esc(countLabel(arr.length))}</span>
+          <span class="card-top-actions">
+            ${hasTopicOverride(unit.id) ? '<span class="manual-override-marker" title="Есть ручная тематическая правка">ручная</span>' : ''}
+            <span class="unit-count-badge">${esc(countLabel(arr.length))}</span>
+            ${currentAccess?.role === 'admin'
+              ? `<button class="topic-edit-button" type="button" data-edit-topic="${esc(unit.id)}" title="Изменить темы и подтемы">✎</button>`
+              : ''}
+          </span>
         </div>
         <h4>${esc(unitTitle(unit))}</h4>
         <div class="kes-line">${esc(unitKes(unit))}</div>
@@ -982,6 +1075,13 @@
       });
     });
 
+    el.matrixTrack.querySelectorAll('[data-edit-topic]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        openTopicEditor(btn.dataset.editTopic);
+      });
+    });
+
     el.matrixTrack.querySelectorAll('[data-status-unit]').forEach(btn => {
       btn.addEventListener('click', async e => {
         e.stopPropagation();
@@ -991,6 +1091,222 @@
         await setUnitStatus(unit, next);
       });
     });
+  }
+
+
+  function topicPairsFromRecords(records) {
+    const ids = new Set(records.map(x => x.topic.id));
+    const rows = [];
+    const topRecords = records.filter(x => x.topic.level === 'topic')
+      .sort((a,b) => (a.topic.sort_order ?? 0) - (b.topic.sort_order ?? 0));
+
+    for (const top of topRecords) {
+      const children = records
+        .filter(x => x.topic.level === 'subtopic' && x.topic.parent_id === top.topic.id)
+        .sort((a,b) => (a.topic.sort_order ?? 0) - (b.topic.sort_order ?? 0));
+      if (children.length) {
+        for (const child of children) {
+          rows.push({ top: top.topic, sub: child.topic });
+        }
+      } else {
+        rows.push({ top: top.topic, sub: null });
+      }
+    }
+
+    const orphans = records
+      .filter(x => x.topic.level === 'subtopic' && !x.topic.parent_id)
+      .sort((a,b) => (a.topic.sort_order ?? 0) - (b.topic.sort_order ?? 0));
+    for (const orphan of orphans) rows.push({ top: null, sub: orphan.topic });
+
+    // If data is unusual (child without parent link in the record set), still show it.
+    const childIdsAlready = new Set(rows.filter(x => x.sub).map(x => x.sub.id));
+    for (const rec of records.filter(x => x.topic.level === 'subtopic' && x.topic.parent_id)) {
+      if (!childIdsAlready.has(rec.topic.id)) {
+        rows.push({ top: topicById.get(rec.topic.parent_id) || null, sub: rec.topic });
+      }
+    }
+    return rows;
+  }
+
+  function renderBaseTopicChips(unitId) {
+    const pairs = topicPairsFromRecords(baseUnitTopicRecords(unitId));
+    el.baseTopicChips.innerHTML = pairs.length
+      ? pairs.map(pair => `
+          <span class="base-topic-chip">
+            ${esc(pair.top ? pair.top.label : 'Без верхней темы')}
+            ${pair.sub ? ` · ${esc(pair.sub.label)}` : ''}
+          </span>
+        `).join('')
+      : '<span class="base-topic-chip empty">Базовой тематической разметки нет</span>';
+  }
+
+  function topTopicOptions(selected = '') {
+    const tops = topTopics();
+    const orphanExists = topics.some(x => x.level === 'subtopic' && x.is_active && !x.parent_id);
+    return [
+      '<option value="">Выберите тему</option>',
+      ...tops.map(t => `<option value="${esc(t.id)}"${t.id === selected ? ' selected' : ''}>${esc(t.label)}</option>`),
+      ...(orphanExists
+        ? [`<option value="__orphan__"${selected === '__orphan__' ? ' selected' : ''}>Без верхней темы · отдельная подтема</option>`]
+        : [])
+    ].join('');
+  }
+
+  function subtopicOptionsForManual(topicValue, selected = '') {
+    let subs = [];
+    if (topicValue === '__orphan__') {
+      subs = topics.filter(x => x.level === 'subtopic' && x.is_active && !x.parent_id);
+    } else if (topicValue) {
+      subs = topics.filter(x => x.level === 'subtopic' && x.is_active && x.parent_id === topicValue);
+    }
+
+    subs.sort((a,b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+    const firstLabel = topicValue === '__orphan__' ? 'Выберите отдельную подтему' : 'Без подтемы';
+    return `<option value="">${esc(firstLabel)}</option>` +
+      subs.map(s => `<option value="${esc(s.id)}"${s.id === selected ? ' selected' : ''}>${esc(s.label)}</option>`).join('');
+  }
+
+  function makeManualTopicRow(pair = null) {
+    const row = document.createElement('div');
+    row.className = 'manual-topic-row';
+
+    let topValue = '';
+    let subValue = '';
+    if (pair?.top) topValue = pair.top.id;
+    if (!pair?.top && pair?.sub) topValue = '__orphan__';
+    if (pair?.sub) subValue = pair.sub.id;
+
+    row.innerHTML = `
+      <select class="manual-topic-select" aria-label="Тема">
+        ${topTopicOptions(topValue)}
+      </select>
+      <select class="manual-subtopic-select" aria-label="Подтема" ${topValue ? '' : 'disabled'}>
+        ${subtopicOptionsForManual(topValue, subValue)}
+      </select>
+      <button class="remove-manual-row" type="button" title="Удалить эту тему">×</button>
+    `;
+
+    const topicSelect = row.querySelector('.manual-topic-select');
+    const subSelect = row.querySelector('.manual-subtopic-select');
+    const removeButton = row.querySelector('.remove-manual-row');
+
+    topicSelect.addEventListener('change', () => {
+      const value = topicSelect.value;
+      subSelect.disabled = !value;
+      subSelect.innerHTML = subtopicOptionsForManual(value, '');
+    });
+    removeButton.addEventListener('click', () => {
+      row.remove();
+      if (!el.manualTopicRows.children.length) el.manualTopicRows.appendChild(makeManualTopicRow());
+    });
+
+    return row;
+  }
+
+  function manualPairsForUnit(unitId) {
+    const records = manualUnitTopicRecords(unitId);
+    return topicPairsFromRecords(records);
+  }
+
+  function openTopicEditor(unitId) {
+    if (currentAccess?.role !== 'admin') return;
+    const unit = units.find(x => x.id === unitId);
+    if (!unit) return;
+
+    editingTopicUnitId = unitId;
+    el.topicEditorTitle.textContent = `Темы задания ${unitReference(unit).replace(/^FIPI (GROUP )?/,'')}`;
+    renderBaseTopicChips(unitId);
+
+    const override = overrideByUnit.get(unitId);
+    el.topicOverrideMode.value = override?.mode || 'add';
+    el.topicAdminNote.value = override?.note || '';
+
+    el.manualTopicRows.innerHTML = '';
+    const pairs = manualPairsForUnit(unitId);
+    if (pairs.length) {
+      for (const pair of pairs) el.manualTopicRows.appendChild(makeManualTopicRow(pair));
+    } else {
+      el.manualTopicRows.appendChild(makeManualTopicRow());
+    }
+
+    el.resetTopicOverrideButton.disabled = !override;
+    if (typeof el.topicEditorDialog.showModal === 'function') el.topicEditorDialog.showModal();
+  }
+
+  function collectManualTopicIds() {
+    const ids = new Set();
+
+    for (const row of el.manualTopicRows.querySelectorAll('.manual-topic-row')) {
+      const topValue = row.querySelector('.manual-topic-select').value;
+      const subValue = row.querySelector('.manual-subtopic-select').value;
+
+      if (!topValue) continue;
+
+      if (topValue === '__orphan__') {
+        if (!subValue) throw new Error('Для «Без верхней темы» выберите отдельную подтему.');
+        ids.add(subValue);
+        continue;
+      }
+
+      ids.add(topValue);
+      if (subValue) ids.add(subValue);
+    }
+
+    return [...ids];
+  }
+
+  async function saveTopicOverride() {
+    if (currentAccess?.role !== 'admin' || !editingTopicUnitId) return;
+
+    el.saveTopicOverrideButton.disabled = true;
+    try {
+      const topicIds = collectManualTopicIds();
+      if (!topicIds.length) throw new Error('Добавьте хотя бы одну тему или подтему.');
+
+      const { error } = await supabaseClient.rpc('ege_admin_save_topic_override', {
+        p_unit_id: editingTopicUnitId,
+        p_mode: el.topicOverrideMode.value,
+        p_topic_ids: topicIds,
+        p_note: el.topicAdminNote.value.trim() || null
+      });
+      if (error) throw error;
+
+      await refreshManualTopicData();
+      el.topicEditorDialog.close();
+      editingTopicUnitId = null;
+      render(false);
+      showToast('✓ Ручная тематическая правка сохранена');
+    } catch (error) {
+      console.error(error);
+      showToast(error?.message || 'Не удалось сохранить разметку.');
+    } finally {
+      el.saveTopicOverrideButton.disabled = false;
+    }
+  }
+
+  async function resetTopicOverride() {
+    if (currentAccess?.role !== 'admin' || !editingTopicUnitId) return;
+    const unitId = editingTopicUnitId;
+
+    el.resetTopicOverrideButton.disabled = true;
+    try {
+      const { error } = await supabaseClient.rpc('ege_admin_reset_topic_override', {
+        p_unit_id: unitId
+      });
+      if (error) throw error;
+
+      await refreshManualTopicData();
+      el.topicEditorDialog.close();
+      editingTopicUnitId = null;
+      render(false);
+      showToast('Ручная правка сброшена · восстановлена базовая разметка');
+    } catch (error) {
+      console.error(error);
+      showToast(error?.message || 'Не удалось сбросить ручную правку.');
+    } finally {
+      el.resetTopicOverrideButton.disabled = false;
+    }
   }
 
   function openUnit(unit) {
@@ -1071,6 +1387,11 @@
     items = [];
     topics = [];
     unitTopicLinks = [];
+    topicOverrides = [];
+    manualTopicLinks = [];
+    overrideByUnit = new Map();
+    manualLinksByUnit = new Map();
+    editingTopicUnitId = null;
     itemsByUnit = new Map();
     topicById = new Map();
     linksByUnit = new Map();
@@ -1323,6 +1644,13 @@
   });
 
   el.closeHistoryDialogButton.addEventListener('click', () => el.historyDialog.close());
+
+  el.closeTopicEditorButton.addEventListener('click', () => el.topicEditorDialog.close());
+  el.addManualTopicRowButton.addEventListener('click', () => {
+    el.manualTopicRows.appendChild(makeManualTopicRow());
+  });
+  el.saveTopicOverrideButton.addEventListener('click', saveTopicOverride);
+  el.resetTopicOverrideButton.addEventListener('click', resetTopicOverride);
 
   document.addEventListener('visibilitychange', () => {
     refreshStatusesWhenVisible();

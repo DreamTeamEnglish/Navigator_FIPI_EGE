@@ -162,6 +162,52 @@
     </div>
   </dialog>
 
+  <dialog id="topicEditorDialog" class="dialog-shell topic-editor-shell">
+    <div class="dialog-card topic-editor-card">
+      <button id="closeTopicEditorButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+
+      <span class="gold-kicker">ADMIN · TOPIC EDITOR</span>
+      <h3 id="topicEditorTitle">Темы задания</h3>
+      <p class="topic-editor-intro">
+        Базовая разметка сохраняется отдельно. Здесь можно добавить темы к ней
+        или заменить её только в Navigator.
+      </p>
+
+      <section class="topic-editor-section base-topic-section">
+        <div class="topic-editor-section-title">АВТОМАТИЧЕСКАЯ РАЗМЕТКА</div>
+        <div id="baseTopicChips" class="base-topic-chips"></div>
+      </section>
+
+      <section class="topic-editor-section">
+        <div class="topic-editor-section-title">РЕЖИМ РУЧНОЙ ПРАВКИ</div>
+        <select id="topicOverrideMode" class="topic-mode-select">
+          <option value="add">Добавить к автоматической разметке</option>
+          <option value="replace">Заменить разметку в Navigator</option>
+        </select>
+      </section>
+
+      <section class="topic-editor-section">
+        <div class="topic-editor-row-head">
+          <div class="topic-editor-section-title">РУЧНЫЕ ТЕМЫ И ПОДТЕМЫ</div>
+          <button id="addManualTopicRowButton" class="button secondary topic-add-button" type="button">＋ Добавить тему</button>
+        </div>
+        <div id="manualTopicRows" class="manual-topic-rows"></div>
+      </section>
+
+      <section class="topic-editor-section">
+        <label class="topic-note-label">
+          <span>ЗАМЕТКА АДМИНИСТРАТОРА — НЕОБЯЗАТЕЛЬНО</span>
+          <textarea id="topicAdminNote" rows="3" placeholder="Например: прослушала аудио — тема Путешествия"></textarea>
+        </label>
+      </section>
+
+      <div class="topic-editor-actions">
+        <button id="resetTopicOverrideButton" class="button ghost" type="button">Сбросить ручную правку</button>
+        <button id="saveTopicOverrideButton" class="button primary topic-save-button" type="button">Сохранить</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="adminDialog" class="dialog-shell admin-dialog-shell">
     <div class="dialog-card admin-dialog-card">
       <button id="closeAdminDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
