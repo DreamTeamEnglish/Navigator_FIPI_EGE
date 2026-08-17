@@ -55,6 +55,10 @@
   let mediaLinksByUnit = new Map();
   let activeBackupObjectUrls = [];
 
+  let demoMode = false;
+  let demoUsesAuth = false;
+  const DEMO_STATUS_KEY = 'ege-public-demo-status-v035';
+
   let adminUsers = [];
   let adminOnline = [];
   let adminActiveTab = 'participants';
@@ -159,6 +163,10 @@
     adminSourceState: $('#adminSourceState'),
     useFipiSourceButton: $('#useFipiSourceButton'),
     useYandexSourceButton: $('#useYandexSourceButton'),
+
+    adminDemoState: $('#adminDemoState'),
+    toggleDemoButton: $('#toggleDemoButton'),
+    previewDemoButton: $('#previewDemoButton'),
 
     backupTaskDialog: $('#backupTaskDialog'),
     closeBackupTaskButton: $('#closeBackupTaskButton'),
@@ -469,11 +477,55 @@
     renderAdminOnline();
   }
 
+
+  async function refreshAdminDemoStatus() {
+    if (currentAccess?.role !== 'admin') return;
+    const { data, error } = await supabaseClient.rpc('ege_admin_demo_status');
+    if (error) throw error;
+
+    const row = data?.[0] || {};
+    runtimeConfig.demo_enabled = Boolean(row.demo_enabled);
+    const count = Number(row.demo_units || 0);
+
+    el.adminDemoState.textContent = runtimeConfig.demo_enabled
+      ? `Включён · ${count} фиксированных карточек · 4 × 15 разделов`
+      : `Выключен · подборка сохранена (${count} карточек)`;
+
+    el.toggleDemoButton.textContent = runtimeConfig.demo_enabled ? 'Выключить DEMO' : 'Включить DEMO';
+    el.toggleDemoButton.className = runtimeConfig.demo_enabled ? 'button ghost' : 'button secondary';
+  }
+
+  async function toggleDemoEnabled() {
+    if (currentAccess?.role !== 'admin') return;
+    el.toggleDemoButton.disabled = true;
+    try {
+      const next = !runtimeConfig.demo_enabled;
+      const { data, error } = await supabaseClient.rpc('ege_admin_set_demo_enabled', {
+        p_enabled: next
+      });
+      if (error) throw error;
+      runtimeConfig.demo_enabled = Boolean(data);
+      await refreshAdminDemoStatus();
+      showToast(runtimeConfig.demo_enabled ? '✓ PUBLIC DEMO включён' : 'PUBLIC DEMO выключен');
+    } catch (error) {
+      console.error(error);
+      showToast(error?.message || 'Не удалось изменить DEMO.');
+    } finally {
+      el.toggleDemoButton.disabled = false;
+    }
+  }
+
+  function previewPublicDemo() {
+    const url = new URL(window.location.href);
+    url.searchParams.set('demo','1');
+    window.open(url.toString(), '_blank', 'noopener,noreferrer');
+  }
+
   async function refreshAdminPanel() {
     el.refreshAdminButton.disabled = true;
     try {
       await loadRuntimeConfig();
-      await Promise.all([refreshAdminParticipants(), refreshAdminOnline()]);
+      await Promise.all([refreshAdminParticipants(), refreshAdminOnline(), refreshAdminDemoStatus()]);
     } catch (error) {
       console.error('Admin panel refresh failed:', error);
       showToast('Не удалось обновить ADMIN.');
@@ -647,7 +699,94 @@
   }
 
   function currentPrincipalKey() {
+    if (demoMode && !demoUsesAuth) return null;
     return currentUser ? `auth:${currentUser.id}` : null;
+  }
+
+
+  function loadPublicDemoStatuses() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(DEMO_STATUS_KEY) || '{}');
+      return new Map(Object.entries(raw));
+    } catch {
+      return new Map();
+    }
+  }
+
+  function savePublicDemoStatuses() {
+    if (!demoMode || demoUsesAuth) return;
+    try {
+      localStorage.setItem(DEMO_STATUS_KEY, JSON.stringify(Object.fromEntries(itemStatus)));
+    } catch {}
+  }
+
+  function applyCatalogArrays(u, i, t, l) {
+    units = u || [];
+    items = i || [];
+    topics = t || [];
+    unitTopicLinks = l || [];
+
+    topicOverrides = [];
+    manualTopicLinks = [];
+    overrideByUnit = new Map();
+    manualLinksByUnit = new Map();
+
+    media = [];
+    unitMediaLinks = [];
+    mediaById = new Map();
+    mediaLinksByUnit = new Map();
+
+    itemsByUnit = new Map();
+    for (const item of items) {
+      if (!itemsByUnit.has(item.unit_id)) itemsByUnit.set(item.unit_id, []);
+      itemsByUnit.get(item.unit_id).push(item);
+    }
+    for (const arr of itemsByUnit.values()) {
+      arr.sort((a,b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    }
+
+    topicById = new Map(topics.map(x => [x.id, x]));
+    linksByUnit = new Map();
+    for (const link of unitTopicLinks) {
+      if (!linksByUnit.has(link.unit_id)) linksByUnit.set(link.unit_id, []);
+      linksByUnit.get(link.unit_id).push(link);
+    }
+  }
+
+  async function loadDemoCatalog() {
+    const { data, error } = await supabaseClient.rpc('ege_demo_catalog');
+    if (error) throw error;
+    if (!data?.enabled) throw new Error('DEMO временно выключен администратором.');
+
+    applyCatalogArrays(
+      data.units || [],
+      data.items || [],
+      data.topics || [],
+      data.unit_topics || []
+    );
+
+    if (demoUsesAuth && currentUser) {
+      const principal = currentPrincipalKey();
+      const rows = await fetchAllRows(
+        'ege_task_status',
+        'principal_key,item_id,status,updated_at',
+        'updated_at',
+        { column: 'principal_key', value: principal }
+      );
+      const allowedItems = new Set(items.map(x => x.id));
+      itemStatus = new Map(
+        rows.filter(x => allowedItems.has(x.item_id)).map(x => [x.item_id, x.status])
+      );
+    } else {
+      itemStatus = loadPublicDemoStatuses();
+    }
+
+    el.unitCount.textContent = String(units.length);
+    el.itemCount.textContent = String(items.length);
+
+    populateTopics();
+    populateSubtopics();
+    render(true);
   }
 
   async function loadCatalog() {
@@ -1601,7 +1740,7 @@
   }
 
   function openUnit(unit) {
-    if (runtimeConfig.content_source === 'fipi') {
+    if (demoMode || runtimeConfig.content_source === 'fipi') {
       window.open(unit.official_fipi_url, '_blank', 'noopener,noreferrer');
       void markViewed(unit);
       return;
@@ -1617,7 +1756,6 @@
 
   async function setUnitStatus(unit, status) {
     const principal = currentPrincipalKey();
-    if (!principal) return;
 
     const arr = itemsByUnit.get(unit.id) || [];
     if (!arr.length) return;
@@ -1625,6 +1763,13 @@
     const previous = new Map(arr.map(item => [item.id, itemStatus.get(item.id) || 'new']));
     for (const item of arr) itemStatus.set(item.id, status);
     render(false);
+
+    if (demoMode && !demoUsesAuth) {
+      savePublicDemoStatuses();
+      return;
+    }
+
+    if (!principal) return;
 
     const now = new Date().toISOString();
     const payload = arr.map(item => ({
@@ -1649,7 +1794,58 @@
     }
   }
 
+
+  function enterDemoApp(kind = 'public') {
+    demoMode = true;
+    demoUsesAuth = kind === 'invited';
+
+    document.body.classList.add('workspace-mode','demo-workspace');
+    el.accessGate.classList.add('hidden');
+    el.appShell.classList.remove('hidden');
+    el.signOutButton.classList.remove('hidden');
+    el.adminButton.classList.add('hidden');
+
+    el.cloudBadge.textContent = demoUsesAuth ? `DEMO · INVITED · ${units.length}` : `DEMO · ${units.length}`;
+    el.cloudBadge.className = 'cloud-badge demo';
+    el.sourceBadge.textContent = 'FIPI · DEMO';
+    el.sourceBadge.title = 'DEMO всегда открывает только официальные страницы выбранных заданий ФИПИ';
+
+    el.signOutButton.textContent = demoUsesAuth ? 'Выйти' : 'Выйти из DEMO';
+    el.modeKicker.textContent = `DEMO · ${units.length} FIXED CARDS · 15 EXAM BUCKETS`;
+
+    if (demoUsesAuth) startPresenceHeartbeat();
+  }
+
+  async function startDemo(kind = 'public') {
+    if (!runtimeConfig.demo_enabled) {
+      showInfo('DEMO временно выключен', 'Администратор отключил публичный DEMO-режим.', 'DEMO');
+      return;
+    }
+
+    el.openDemoButton.disabled = true;
+    const oldText = el.openDemoButton.textContent;
+    el.openDemoButton.textContent = 'Открываю DEMO…';
+
+    try {
+      demoMode = true;
+      demoUsesAuth = kind === 'invited';
+      await loadDemoCatalog();
+      enterDemoApp(kind);
+    } catch (error) {
+      demoMode = false;
+      demoUsesAuth = false;
+      console.error('DEMO load failed:', error);
+      showInfo('DEMO недоступен', error?.message || 'Не удалось загрузить демонстрационную подборку.', 'DEMO');
+    } finally {
+      el.openDemoButton.disabled = false;
+      el.openDemoButton.textContent = oldText;
+    }
+  }
+
   function enterApp(access) {
+    demoMode = false;
+    demoUsesAuth = false;
+    document.body.classList.remove('demo-workspace');
     currentAccess = access;
     document.body.classList.add('workspace-mode');
     el.accessGate.classList.add('hidden');
@@ -1669,6 +1865,9 @@
     stopAdminAutoRefresh();
 
     currentAccess = null;
+    demoMode = false;
+    demoUsesAuth = false;
+    document.body.classList.remove('demo-workspace');
     units = [];
     items = [];
     topics = [];
@@ -1742,9 +1941,26 @@
       showMessage('Активного доступа к EGE Navigator нет или срок доступа завершён.', 'error');
       return;
     }
+    if (access.access_level === 'demo') {
+      try {
+        await registerLoginOnce(user);
+        await loadRuntimeConfig();
+        demoMode = true;
+        demoUsesAuth = true;
+        await loadDemoCatalog();
+        enterDemoApp('invited');
+        await touchPresence();
+      } catch (e) {
+        console.error(e);
+        leaveApp();
+        showMessage(`Не удалось загрузить персональный DEMO: ${e?.message || e}`, 'error');
+      }
+      return;
+    }
+
     if (access.access_level !== 'full') {
       leaveApp();
-      showMessage('Для этого аккаунта установлен DEMO-доступ. Персональный DEMO подключим отдельным этапом.', 'error');
+      showMessage('Для этого аккаунта нет подходящего уровня доступа.', 'error');
       return;
     }
 
@@ -1798,6 +2014,7 @@
   }
 
   async function refreshStatusesWhenVisible() {
+    if (demoMode && !demoUsesAuth) return;
     if (document.visibilityState !== 'visible' || !currentUser || !supabaseClient || !units.length) return;
     try {
       const principal = currentPrincipalKey();
@@ -1837,12 +2054,18 @@
 
     await loadRuntimeConfig();
 
-    const { data, error } = await supabaseClient.auth.getSession();
-    if (error) console.error('Session read failed:', error);
-    const user = data?.session?.user || null;
-    if (user) await activateUser(user);
+    const forceDemo = new URLSearchParams(window.location.search).get('demo') === '1';
+    if (forceDemo) {
+      await startDemo('public');
+    } else {
+      const { data, error } = await supabaseClient.auth.getSession();
+      if (error) console.error('Session read failed:', error);
+      const user = data?.session?.user || null;
+      if (user) await activateUser(user);
+    }
 
     supabaseClient.auth.onAuthStateChange((event, session) => {
+      if (demoMode && !demoUsesAuth) return;
       const nextUser = session?.user || null;
       if (!nextUser) {
         currentUser = null;
@@ -1869,21 +2092,20 @@
     );
   });
 
-  el.openDemoButton.addEventListener('click', () => {
-    if (!runtimeConfig.demo_enabled) {
-      showInfo('DEMO временно выключен', 'Администратор отключил публичный DEMO-режим.', 'DEMO');
-      return;
-    }
-    showInfo(
-      'DEMO включён',
-      'Глобальный флаг DEMO работает. Безопасную ограниченную выборку подключим отдельным этапом через специальный EGE endpoint/RPC, не ослабляя RLS полного каталога.',
-      'DEMO'
-    );
-  });
+  el.openDemoButton.addEventListener('click', () => startDemo('public'));
 
   el.adminButton.addEventListener('click', openAdminPanel);
 
   el.signOutButton.addEventListener('click', async () => {
+    if (demoMode && !demoUsesAuth) {
+      leaveApp();
+      clearMessage();
+      const url = new URL(window.location.href);
+      url.searchParams.delete('demo');
+      window.history.replaceState({},'',url.toString());
+      return;
+    }
+
     if (supabaseClient && currentUser) {
       try { await supabaseClient.rpc('ege_clear_presence'); } catch {}
       await supabaseClient.auth.signOut();
@@ -1938,6 +2160,9 @@
 
   el.useFipiSourceButton.addEventListener('click', () => setContentSource('fipi'));
   el.useYandexSourceButton.addEventListener('click', () => setContentSource('yandex_backup'));
+
+  el.toggleDemoButton.addEventListener('click', toggleDemoEnabled);
+  el.previewDemoButton.addEventListener('click', previewPublicDemo);
 
   el.closeBackupTaskButton.addEventListener('click', () => {
     revokeBackupObjectUrls();

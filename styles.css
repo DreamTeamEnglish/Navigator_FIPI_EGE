@@ -1438,3 +1438,67 @@ select option { background: #062b20; color: #effbf7; }
   .backup-task-head { flex-direction: column; padding-right: 28px; }
   .backup-media-grid { grid-template-columns: 1fr; }
 }
+
+
+/* v0.3.5 — safe public DEMO */
+.admin-demo-panel {
+  flex: 0 0 auto;
+  margin-top: 9px;
+  padding: 11px 12px;
+  border-radius: 13px;
+  border: 1px solid rgba(71,178,137,.18);
+  background: rgba(30,139,101,.055);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.admin-demo-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.admin-demo-title {
+  color: #9ebbb1;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+.admin-demo-state {
+  color: #c7e8dc;
+  font-size: 11px;
+}
+.admin-demo-actions {
+  display: flex;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+.cloud-badge.demo {
+  color: #09261e;
+  background: linear-gradient(180deg, #f0d78f, #d5aa46);
+  border-color: var(--gold);
+}
+.workspace-mode.demo-workspace .control-deck {
+  border-color: rgba(217,175,74,.33);
+}
+.workspace-mode.demo-workspace .topic-edit-button,
+.workspace-mode.demo-workspace #adminButton {
+  display: none !important;
+}
+.demo-note-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid #e1ca8c;
+  background: #fff9e9;
+  color: #745b1f;
+  font-size: 8px;
+  font-weight: 850;
+}
+@media (max-width: 700px) {
+  .admin-demo-panel { flex-direction: column; align-items: stretch; }
+  .admin-demo-actions { width: 100%; }
+  .admin-demo-actions .button { flex: 1 1 0; }
+}
