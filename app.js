@@ -49,6 +49,12 @@
   let manualLinksByUnit = new Map();
   let editingTopicUnitId = null;
 
+  let media = [];
+  let unitMediaLinks = [];
+  let mediaById = new Map();
+  let mediaLinksByUnit = new Map();
+  let activeBackupObjectUrls = [];
+
   let adminUsers = [];
   let adminOnline = [];
   let adminActiveTab = 'participants';
@@ -149,6 +155,17 @@
     topicAdminNote: $('#topicAdminNote'),
     resetTopicOverrideButton: $('#resetTopicOverrideButton'),
     saveTopicOverrideButton: $('#saveTopicOverrideButton'),
+
+    adminSourceState: $('#adminSourceState'),
+    useFipiSourceButton: $('#useFipiSourceButton'),
+    useYandexSourceButton: $('#useYandexSourceButton'),
+
+    backupTaskDialog: $('#backupTaskDialog'),
+    closeBackupTaskButton: $('#closeBackupTaskButton'),
+    backupTaskTitle: $('#backupTaskTitle'),
+    backupTaskMeta: $('#backupTaskMeta'),
+    backupOfficialLink: $('#backupOfficialLink'),
+    backupTaskBody: $('#backupTaskBody'),
   };
 
   function configuredKey() {
@@ -455,6 +472,7 @@
   async function refreshAdminPanel() {
     el.refreshAdminButton.disabled = true;
     try {
+      await loadRuntimeConfig();
       await Promise.all([refreshAdminParticipants(), refreshAdminOnline()]);
     } catch (error) {
       console.error('Admin panel refresh failed:', error);
@@ -586,6 +604,20 @@
     el.sourceBadge.title = backup
       ? 'Navigator использует резервный источник'
       : 'Navigator открывает официальный источник ФИПИ';
+
+    if (el.adminSourceState) {
+      el.adminSourceState.textContent = backup
+        ? 'Сейчас: Яндекс-резерв · лёгкие внутренние страницы'
+        : 'Сейчас: FIPI · официальный сайт';
+      el.useFipiSourceButton?.classList.toggle('active', !backup);
+      el.useYandexSourceButton?.classList.toggle('active', backup);
+      if (el.useYandexSourceButton) {
+        el.useYandexSourceButton.disabled = !runtimeConfig.yandex_backup_ready;
+        el.useYandexSourceButton.title = runtimeConfig.yandex_backup_ready
+          ? 'Переключить весь EGE Navigator на резерв'
+          : 'Резерв ещё не отмечен как готовый';
+      }
+    }
   }
 
   async function loadRuntimeConfig() {
@@ -621,7 +653,7 @@
   async function loadCatalog() {
     const principal = currentPrincipalKey();
 
-    const [u, i, t, l, s, o, m] = await Promise.all([
+    const [u, i, t, l, s, o, m, mm, uml] = await Promise.all([
       fetchAllRows(
         'ege_units',
         'id,unit_key,title,exam_bucket,parent_zid,official_fipi_url,items_total,shared_context',
@@ -659,6 +691,16 @@
         'ege_unit_topic_manual',
         'unit_id,topic_id,updated_at,updated_by',
         'unit_id'
+      ),
+      fetchAllRows(
+        'ege_media',
+        'media_id,kind,extension,official_url,backup_path,backup_ready,integrity_status,content_type,note',
+        'media_id'
+      ),
+      fetchAllRows(
+        'ege_unit_media',
+        'unit_id,media_id,sort_order',
+        'unit_id'
       )
     ]);
 
@@ -668,6 +710,18 @@
     unitTopicLinks = l;
     topicOverrides = o;
     manualTopicLinks = m;
+    media = mm;
+    unitMediaLinks = uml;
+
+    mediaById = new Map(media.map(x => [x.media_id, x]));
+    mediaLinksByUnit = new Map();
+    for (const link of unitMediaLinks) {
+      if (!mediaLinksByUnit.has(link.unit_id)) mediaLinksByUnit.set(link.unit_id, []);
+      mediaLinksByUnit.get(link.unit_id).push(link);
+    }
+    for (const links of mediaLinksByUnit.values()) {
+      links.sort((a,b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    }
 
     itemsByUnit = new Map();
     for (const item of items) {
@@ -770,6 +824,16 @@
       fetchAllRows(
         'ege_unit_topic_manual',
         'unit_id,topic_id,updated_at,updated_by',
+        'unit_id'
+      ),
+      fetchAllRows(
+        'ege_media',
+        'media_id,kind,extension,official_url,backup_path,backup_ready,integrity_status,content_type,note',
+        'media_id'
+      ),
+      fetchAllRows(
+        'ege_unit_media',
+        'unit_id,media_id,sort_order',
         'unit_id'
       )
     ]);
@@ -1309,6 +1373,233 @@
     }
   }
 
+
+  async function setContentSource(source) {
+    if (currentAccess?.role !== 'admin') return;
+    if (!['fipi','yandex_backup'].includes(source)) return;
+
+    if (source === 'yandex_backup' && !runtimeConfig.yandex_backup_ready) {
+      showToast('Яндекс-резерв ещё не отмечен как готовый');
+      return;
+    }
+
+    const current = runtimeConfig.content_source;
+    if (current === source) return;
+
+    const label = source === 'yandex_backup' ? 'Яндекс-резерв' : 'FIPI';
+    const button = source === 'yandex_backup' ? el.useYandexSourceButton : el.useFipiSourceButton;
+    if (button) button.disabled = true;
+
+    try {
+      const { data, error } = await supabaseClient.rpc('ege_admin_set_content_source', {
+        p_source: source
+      });
+      if (error) throw error;
+
+      runtimeConfig.content_source = data || source;
+      updateSourceBadge();
+      showToast(`✓ Источник переключён: ${label}`);
+    } catch (error) {
+      console.error('Source switch failed:', error);
+      showToast(error?.message || 'Не удалось переключить источник.');
+    } finally {
+      updateSourceBadge();
+    }
+  }
+
+  function revokeBackupObjectUrls() {
+    for (const url of activeBackupObjectUrls) {
+      try { URL.revokeObjectURL(url); } catch {}
+    }
+    activeBackupObjectUrls = [];
+  }
+
+  function backupMediaForUnit(unitId) {
+    return (mediaLinksByUnit.get(unitId) || [])
+      .map(link => ({ link, media: mediaById.get(link.media_id) }))
+      .filter(x => x.media);
+  }
+
+  function readableJson(value, depth = 0) {
+    if (value === null || value === undefined || value === '') return [];
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (!text) return [];
+      try {
+        const parsed = JSON.parse(text);
+        return readableJson(parsed, depth);
+      } catch {
+        return [text];
+      }
+    }
+    if (Array.isArray(value)) {
+      const out = [];
+      for (const item of value) out.push(...readableJson(item, depth + 1));
+      return [...new Set(out.filter(Boolean))];
+    }
+    if (typeof value === 'object') {
+      const out = [];
+      for (const [key, val] of Object.entries(value)) {
+        const lines = readableJson(val, depth + 1);
+        if (!lines.length) continue;
+        if (lines.length === 1 && typeof val !== 'object') out.push(`${key}: ${lines[0]}`);
+        else out.push(...lines);
+      }
+      return [...new Set(out.filter(Boolean))];
+    }
+    return [String(value)];
+  }
+
+  function renderSharedContext(unit) {
+    const lines = readableJson(unit.shared_context);
+    if (!lines.length) return '';
+    return `
+      <section class="backup-context-card">
+        <span class="backup-block-label">ОБЩИЙ КОНТЕКСТ ГРУППЫ</span>
+        <div class="backup-readable-text">${lines.map(x => esc(x)).join('\n\n')}</div>
+      </section>
+    `;
+  }
+
+  function renderItemTables(value) {
+    const lines = readableJson(value);
+    if (!lines.length) return '';
+    return `
+      <div class="backup-json-table">
+        ${lines.map(line => `<div class="backup-json-row">${esc(line)}</div>`).join('')}
+      </div>
+    `;
+  }
+
+  function renderBackupItems(unit) {
+    const arr = itemsByUnit.get(unit.id) || [];
+    return `
+      <div class="backup-items">
+        ${arr.map((item, index) => `
+          <article class="backup-item-card">
+            <div class="backup-item-head">
+              <span class="backup-item-ref">${esc(item.display_label || `Задание ${item.fipi_id}`)}</span>
+              <span class="backup-kes">${esc(item.live_kes_code ? `КЭС ${item.live_kes_code}` : 'КЭС —')}</span>
+            </div>
+            <div class="backup-readable-text">${esc(item.item_text || 'Текст задания отсутствует.')}</div>
+            ${renderItemTables(item.item_tables)}
+          </article>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderMediaCards(unit) {
+    const rows = backupMediaForUnit(unit.id);
+    if (!rows.length) {
+      return `
+        <section class="backup-media-section">
+          <span class="backup-block-label">MEDIA</span>
+          <div class="backup-empty-media">Для этого unit сохранённых media нет.</div>
+        </section>
+      `;
+    }
+
+    return `
+      <section class="backup-media-section">
+        <span class="backup-block-label">СОХРАНЁННЫЕ MEDIA · ЯНДЕКС ДИСК</span>
+        <div class="backup-media-grid">
+          ${rows.map(({ media }, idx) => {
+            const ready = Boolean(media.backup_ready && media.backup_path);
+            const kind = media.kind || 'other';
+            return `
+              <article class="backup-media-card ${kind === 'image' ? 'image-card' : ''}" data-backup-media-card="${esc(media.media_id)}">
+                <div class="backup-media-head">
+                  <span class="backup-media-kind">${esc(kind)} ${idx + 1}</span>
+                  <span class="backup-media-status">${ready ? 'резерв готов' : 'резерв недоступен'}</span>
+                </div>
+                <div class="backup-media-slot" data-backup-media-slot="${esc(media.media_id)}">
+                  ${ready
+                    ? `<button class="backup-media-load" type="button" data-load-backup-media="${esc(media.media_id)}">Загрузить ${kind === 'audio' ? 'аудио' : kind === 'image' ? 'изображение' : 'media'}</button>`
+                    : `<div class="backup-media-error">Этот файл входит в 4 недоступных/повреждённых assets. Текст задания всё равно сохранён.</div>`}
+                </div>
+              </article>
+            `;
+          }).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  async function gatewayFetchMedia(mediaId) {
+    const { data } = await supabaseClient.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) throw new Error('Сессия Supabase не найдена.');
+
+    const url = `${CONFIG.supabaseUrl.replace(/\/$/,'')}/functions/v1/ege-backup-gateway?media_id=${encodeURIComponent(mediaId)}`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`${response.status}: ${text || 'резервный файл недоступен'}`);
+    }
+    return await response.blob();
+  }
+
+  async function loadBackupMedia(mediaId) {
+    const m = mediaById.get(mediaId);
+    const slot = el.backupTaskBody.querySelector(`[data-backup-media-slot="${CSS.escape(mediaId)}"]`);
+    if (!m || !slot) return;
+
+    slot.innerHTML = '<div class="backup-loading"><div class="backup-spinner"></div>Загружаю с приватного Яндекс Диска…</div>';
+
+    try {
+      const blob = await gatewayFetchMedia(mediaId);
+      const objectUrl = URL.createObjectURL(blob);
+      activeBackupObjectUrls.push(objectUrl);
+
+      if (m.kind === 'image') {
+        slot.innerHTML = `<img src="${esc(objectUrl)}" alt="Изображение задания">`;
+      } else if (m.kind === 'audio') {
+        slot.innerHTML = `<audio controls preload="metadata" src="${esc(objectUrl)}"></audio>`;
+      } else if (m.kind === 'video') {
+        slot.innerHTML = `<video controls preload="metadata" src="${esc(objectUrl)}"></video>`;
+      } else {
+        slot.innerHTML = `<a class="button secondary wide" href="${esc(objectUrl)}" target="_blank" rel="noopener noreferrer">Открыть media</a>`;
+      }
+    } catch (error) {
+      console.error('Backup media load failed:', error);
+      slot.innerHTML = `
+        <div class="backup-media-error">
+          Не удалось загрузить media с Яндекс Диска.<br>
+          ${esc(error?.message || error)}
+        </div>
+      `;
+    }
+  }
+
+  function bindBackupMediaButtons() {
+    el.backupTaskBody.querySelectorAll('[data-load-backup-media]').forEach(btn => {
+      btn.addEventListener('click', () => loadBackupMedia(btn.dataset.loadBackupMedia));
+    });
+  }
+
+  async function openBackupUnit(unit) {
+    revokeBackupObjectUrls();
+
+    el.backupTaskTitle.textContent = unitTitle(unit);
+    el.backupTaskMeta.textContent = `${unitReference(unit)} · ${BUCKET_MAP.get(unit.exam_bucket)?.label || unit.exam_bucket} · ${unitKes(unit)}`;
+    el.backupOfficialLink.href = unit.official_fipi_url;
+    el.backupTaskBody.innerHTML = `
+      ${renderSharedContext(unit)}
+      ${renderBackupItems(unit)}
+      ${renderMediaCards(unit)}
+    `;
+
+    bindBackupMediaButtons();
+
+    if (typeof el.backupTaskDialog.showModal === 'function') {
+      el.backupTaskDialog.showModal();
+    }
+    await markViewed(unit);
+  }
+
   function openUnit(unit) {
     if (runtimeConfig.content_source === 'fipi') {
       window.open(unit.official_fipi_url, '_blank', 'noopener,noreferrer');
@@ -1316,12 +1607,7 @@
       return;
     }
 
-    showInfo(
-      'Яндекс-резерв',
-      'Источник уже переключаемый. Внутренний рендер текста, таблиц, аудио и изображений подключается отдельным этапом; сам тематический Navigator уже работает на общей матрице.',
-      'ЯНДЕКС-РЕЗЕРВ'
-    );
-    void markViewed(unit);
+    void openBackupUnit(unit);
   }
 
   async function markViewed(unit) {
@@ -1392,6 +1678,11 @@
     overrideByUnit = new Map();
     manualLinksByUnit = new Map();
     editingTopicUnitId = null;
+    media = [];
+    unitMediaLinks = [];
+    mediaById = new Map();
+    mediaLinksByUnit = new Map();
+    revokeBackupObjectUrls();
     itemsByUnit = new Map();
     topicById = new Map();
     linksByUnit = new Map();
@@ -1645,6 +1936,15 @@
 
   el.closeHistoryDialogButton.addEventListener('click', () => el.historyDialog.close());
 
+  el.useFipiSourceButton.addEventListener('click', () => setContentSource('fipi'));
+  el.useYandexSourceButton.addEventListener('click', () => setContentSource('yandex_backup'));
+
+  el.closeBackupTaskButton.addEventListener('click', () => {
+    revokeBackupObjectUrls();
+    el.backupTaskDialog.close();
+  });
+  el.backupTaskDialog.addEventListener('close', revokeBackupObjectUrls);
+
   el.closeTopicEditorButton.addEventListener('click', () => el.topicEditorDialog.close());
   el.addManualTopicRowButton.addEventListener('click', () => {
     el.manualTopicRows.appendChild(makeManualTopicRow());
@@ -1654,7 +1954,10 @@
 
   document.addEventListener('visibilitychange', () => {
     refreshStatusesWhenVisible();
-    if (document.visibilityState === 'visible' && currentUser) void touchPresence();
+    if (document.visibilityState === 'visible' && currentUser) {
+      void touchPresence();
+      void loadRuntimeConfig();
+    }
   });
 
   init();

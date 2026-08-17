@@ -162,6 +162,25 @@
     </div>
   </dialog>
 
+  <dialog id="backupTaskDialog" class="dialog-shell backup-task-shell">
+    <div class="dialog-card backup-task-card">
+      <button id="closeBackupTaskButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+
+      <div class="backup-task-head">
+        <div>
+          <span class="gold-kicker">ЯНДЕКС-РЕЗЕРВ · LIGHT TASK VIEW</span>
+          <h3 id="backupTaskTitle">Задание ЕГЭ</h3>
+          <p id="backupTaskMeta" class="backup-task-meta"></p>
+        </div>
+        <a id="backupOfficialLink" class="button ghost backup-official-link" href="#" target="_blank" rel="noopener noreferrer">
+          Оригинал ФИПИ ↗
+        </a>
+      </div>
+
+      <div id="backupTaskBody" class="backup-task-body"></div>
+    </div>
+  </dialog>
+
   <dialog id="topicEditorDialog" class="dialog-shell topic-editor-shell">
     <div class="dialog-card topic-editor-card">
       <button id="closeTopicEditorButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
@@ -220,6 +239,24 @@
         </div>
         <button id="refreshAdminButton" class="button ghost" type="button">↻ Обновить</button>
       </div>
+
+
+      <section class="admin-source-panel">
+        <div class="admin-source-copy">
+          <span class="admin-source-title">ИСТОЧНИК ЗАДАНИЙ</span>
+          <span id="adminSourceState" class="admin-source-state">—</span>
+        </div>
+        <div class="admin-source-actions">
+          <button id="useFipiSourceButton" class="source-choice-button" type="button">
+            <span>FIPI</span>
+            <small>официальный сайт</small>
+          </button>
+          <button id="useYandexSourceButton" class="source-choice-button" type="button">
+            <span>Яндекс-резерв</span>
+            <small>текст + сохранённые media</small>
+          </button>
+        </div>
+      </section>
 
       <div class="admin-tabs" role="tablist">
         <button id="participantsTabButton" class="admin-tab active" type="button" data-admin-tab="participants">
