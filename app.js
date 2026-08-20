@@ -22,6 +22,23 @@
     { id: 'speaking_4', label: 'Говорение · задание 4', short: 'Говорение 4', group: 'Говорение' },
   ];
   const BUCKET_MAP = new Map(BUCKETS.map(x => [x.id, x]));
+  const BUCKET_EXAM_RANGES = Object.freeze({
+    listening_1: [1, 1],
+    listening_2: [2, 2],
+    listening_3_9: [3, 9],
+    reading_10: [10, 10],
+    reading_11: [11, 11],
+    reading_12_18: [12, 18],
+    grammar_19_24: [19, 24],
+    wordformation_25_29: [25, 29],
+    vocabulary_30_36: [30, 36],
+    writing_37: [37, 37],
+    writing_38: [38, 38],
+    speaking_1: [1, 1],
+    speaking_2: [2, 2],
+    speaking_3: [3, 3],
+    speaking_4: [4, 4],
+  });
 
   const CONTACT_TEXT = 'Здравствуйте! Хочу получить доступ к тематическому навигатору по открытому банку заданий ЕГЭ ФИПИ (English).';
   const STATUS_META = {
@@ -1612,14 +1629,19 @@
     if (!text) return { instruction: '', body: '' };
 
     if (unit?.exam_bucket === 'listening_1') {
-      // FIPI often stores a short generic lead followed by the complete listening instruction.
-      // Keep the whole instruction block together and leave the statements for the structured table.
       const m = text.match(/^(.*?Занесите свои ответы в таблицу\.)\s*/isu);
       if (m) return { instruction: backupTextClean(m[1]), body: backupTextClean(text.slice(m[0].length)) };
     }
 
     if (unit?.exam_bucket === 'reading_10') {
       const m = text.match(/^(.*?В задании один заголовок лишний\.)\s*/isu);
+      if (m) return { instruction: backupTextClean(m[1]), body: backupTextClean(text.slice(m[0].length)) };
+    }
+
+    if (unit?.exam_bucket === 'reading_11') {
+      // The bank stores a generic lead + the real instruction + passage in one string.
+      // Keep only the complete instruction here; the passage is rendered separately.
+      const m = text.match(/^(?:Установите соответствие и впишите ответ\.\s*)?(Прочитайте текст и заполните пропуски A[–-]F.*?Занесите цифры, обозначающие соответствующие части предложений, в таблицу\.)\s*/isu);
       if (m) return { instruction: backupTextClean(m[1]), body: backupTextClean(text.slice(m[0].length)) };
     }
 
@@ -1642,6 +1664,40 @@
     return { instruction: '', body: text };
   }
 
+  function instructionCmp(value) {
+    return backupTextClean(value).replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru-RU');
+  }
+
+  function bestInstruction(parts, unit) {
+    let rows = [...new Set((parts || []).map(backupTextClean).filter(Boolean))];
+    if (!rows.length) return '';
+    if (rows.length === 1) return rows[0];
+
+    // Remove short generic prompts whenever the same unit contains a full instruction.
+    const generic = /^(?:Прочитайте текст и выполните задания|Выберите правильный ответ|Установите соответствие и впишите ответ|Впишите правильный ответ|Запишите правильный ответ)\.?$/iu;
+    if (rows.some(row => !generic.test(row) && row.length > 55)) rows = rows.filter(row => !generic.test(row));
+
+    // Remove exact/near-exact fragments already covered by a longer instruction.
+    rows = rows.filter((row, index) => {
+      const cmp = instructionCmp(row);
+      return !rows.some((other, otherIndex) => {
+        if (index === otherIndex || other.length <= row.length + 12) return false;
+        return instructionCmp(other).includes(cmp);
+      });
+    });
+
+    const preferSingle = new Set([
+      'listening_1','listening_2','listening_3_9',
+      'reading_10','reading_11','reading_12_18',
+      'grammar_19_24','wordformation_25_29','vocabulary_30_36'
+    ]);
+    if (preferSingle.has(unit?.exam_bucket) && rows.length > 1) {
+      rows.sort((a,b) => b.length - a.length);
+      return rows[0];
+    }
+    return rows.join('\n\n');
+  }
+
   function unitViewerModel(unit) {
     const arr = (itemsByUnit.get(unit.id) || []).slice().sort((a,b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     const shared = readableJson(unit.shared_context);
@@ -1649,18 +1705,22 @@
     const sharedContext = [];
     for (const part of shared) (looksLikeInstruction(part) ? sharedInstruction : sharedContext).push(part);
 
-    const itemModels = arr.map(item => ({ item, ...splitItemInstruction(item, unit) }));
+    const itemModels = arr.map(item => {
+      const split = splitItemInstruction(item, unit);
+      let body = split.body;
+      if (unit?.exam_bucket === 'reading_11') body = cleanReading11Body(body, item.item_tables);
+      return { item, instruction: split.instruction, body };
+    });
+
     const instructionParts = [...sharedInstruction];
     for (const row of itemModels) {
-      if (row.instruction && !instructionParts.some(x => x === row.instruction)) instructionParts.push(row.instruction);
+      if (row.instruction && !instructionParts.includes(row.instruction)) instructionParts.push(row.instruction);
     }
 
-    // For a single-card unit the remaining item body is the main task material.
-    // For grouped units every remaining body stays with its own subtask.
     const singleContext = itemModels.length === 1 && itemModels[0].body ? [itemModels[0].body] : [];
     return {
       items: itemModels,
-      instruction: [...new Set(instructionParts)].join('\n\n'),
+      instruction: bestInstruction(instructionParts, unit),
       context: [...new Set([...sharedContext, ...singleContext].filter(Boolean))]
     };
   }
@@ -1681,8 +1741,6 @@
 
   function shouldSuppressLegacyContext(unit, model) {
     if (!model.context.length || !hasStructuredItemTable(model)) return false;
-    // These FIPI buckets import one legacy merged text blob AND a clean structured table.
-    // Showing both duplicates the same exercise. Prefer the structured representation.
     return ['reading_10', 'listening_1', 'listening_2'].includes(unit?.exam_bucket);
   }
 
@@ -1718,20 +1776,20 @@
       const normalized = cells.join(' | ').replace(/\s+/g,' ').trim();
       if (!normalized || seen.has(normalized)) continue;
       seen.add(normalized);
-      // One-cell rows are usually duplicates of the visible task text, not a table.
       if (cells.length < 2) continue;
 
-      // Some FIPI imports repeat the complete instruction in both columns of the first row.
-      // The instruction is already rendered above, so this row must not appear in the options table.
       const normalizedCells = cells.map(cell => cell.replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru-RU'));
       const uniqueCells = [...new Set(normalizedCells)];
       if (uniqueCells.length === 1 && looksLikeInstruction(cells[0])) continue;
       if (cells.every(cell => looksLikeInstruction(cell))) continue;
 
+      // Ignore FIPI answer-selector matrices such as ABCDEF / 1234567.
+      const joined = cells.join('').replace(/\s+/g, '');
+      if (/^[A-GА-Е]{4,8}(?:1234567){2,}$/iu.test(joined)) continue;
+      if (cells.every(cell => /^[A-GА-Е]$|^12345678?$|^Говорящий$|^Утверждение$/iu.test(cell))) continue;
+
       clean.push(cells);
     }
-    // Prefer concise rows: imported FIPI tables often contain one giant duplicate row
-    // followed by the actual two-column rows we need.
     const concise = clean.filter(cells => cells.length <= 5 && cells.join(' ').length <= 1200);
     return (concise.length ? concise : clean).slice(0, 40);
   }
@@ -1750,13 +1808,138 @@
     `;
   }
 
+  function isOptionNumber(value) {
+    return /^[1-8][.)]?$/.test(backupTextClean(value));
+  }
+
+  function choiceModelFromTables(value) {
+    const leaf = tableLeafRows(value);
+    const optionMap = new Map();
+
+    for (const cells of leaf) {
+      for (let i = 0; i < cells.length - 1; i += 1) {
+        const rawNo = backupTextClean(cells[i]);
+        const option = backupTextClean(cells[i + 1]).replace(/\s+/g, ' ');
+        if (!isOptionNumber(rawNo) || !option || option.length > 320) continue;
+        const no = rawNo.replace(/[.)]/g, '');
+        if (!optionMap.has(no) && !/^(?:true|false|not stated)$/iu.test(option)) optionMap.set(no, option);
+      }
+    }
+
+    const options = [...optionMap.entries()].sort((a,b) => Number(a[0]) - Number(b[0]));
+    if (options.length < 2) return null;
+
+    const optionValues = new Set(options.map(([,v]) => instructionCmp(v)));
+    const candidates = [];
+    for (const cells of leaf) {
+      for (const raw of cells) {
+        const candidate = backupTextClean(raw).replace(/\s+/g, ' ');
+        const cmp = instructionCmp(candidate);
+        if (candidate.length < 12 || candidate.length > 700) continue;
+        if (looksLikeInstruction(candidate) || optionValues.has(cmp) || isOptionNumber(candidate)) continue;
+        if (/^[A-GА-Е]{4,8}(?:12345678?){2,}$/iu.test(candidate.replace(/\s+/g,''))) continue;
+        const markers = (candidate.match(/(?:^|\s)[1-8][.)]\s+/g) || []).length;
+        if (markers >= 2) continue;
+        let score = candidate.length;
+        if (/[?？]\s*$/.test(candidate)) score += 500;
+        if (/[…]{1}|\.{3}\s*$/.test(candidate)) score += 250;
+        if (/_{3,}/.test(candidate)) score += 120;
+        candidates.push({ candidate, score });
+      }
+    }
+    candidates.sort((a,b) => b.score - a.score);
+    return { prompt: candidates[0]?.candidate || '', options };
+  }
+
+  function renderChoiceRows(choice) {
+    if (!choice?.options?.length) return '';
+    return renderStructuredRows(choice.options.map(([n,v]) => [`${n})`, v]));
+  }
+
+  function stripOptionsFromBody(body, options) {
+    let text = backupTextClean(body);
+    if (!text || !options?.length) return text;
+    let cut = text.length;
+    for (const [n, value] of options) {
+      const exact = `${n}) ${value}`;
+      const dot = `${n}. ${value}`;
+      for (const needle of [exact, dot, value]) {
+        const idx = text.indexOf(needle);
+        if (idx >= 0) cut = Math.min(cut, idx);
+      }
+      if (Number(n) === 1 && cut < text.length) break;
+    }
+    if (cut < text.length) text = text.slice(0, cut);
+    return backupTextClean(text);
+  }
+
+  function stripAnswerMatrixTail(value) {
+    return backupTextClean(value)
+      .replace(/\s+(?:Говорящий|Текст|Утверждение)?\s*[A-GА-Е]{4,8}\s*(?:(?:1\s*2\s*3\s*4\s*5\s*6\s*7(?:\s*8)?\s*){2,})$/iu, '')
+      .replace(/\s+[A-GА-Е]{4,8}\s*(?:12345678?\s*){2,}$/iu, '')
+      .trim();
+  }
+
+  function cleanReading11Body(body, tables) {
+    const choice = choiceModelFromTables(tables);
+    let text = stripOptionsFromBody(body, choice?.options || []);
+    text = stripAnswerMatrixTail(text);
+    return backupTextClean(text);
+  }
+
+  function grammarPairFromTables(value, fallbackBody = '') {
+    const leaf = tableLeafRows(value);
+    for (const cells of leaf) {
+      if (cells.length !== 2) continue;
+      const left = backupTextClean(cells[0]).replace(/\s+/g, ' ');
+      const right = backupTextClean(cells[1]).replace(/\s+/g, ' ');
+      if (left.length < 8 || right.length > 45 || /[.!?,;:]/.test(right)) continue;
+      const letters = right.replace(/[^A-Za-zА-ЯЁ]/g, '');
+      if (!letters || right !== right.toUpperCase()) continue;
+      return { text: left, source: right };
+    }
+
+    const body = backupTextClean(fallbackBody);
+    const m = body.match(/^(.*?)(?:\s+)([A-ZА-ЯЁ]+(?:\s+[A-ZА-ЯЁ]+){0,2})$/u);
+    if (m && m[1].length > 8) return { text: backupTextClean(m[1]), source: m[2] };
+    return null;
+  }
+
+  function bucketExamRange(unit) {
+    const configured = BUCKET_EXAM_RANGES[unit?.exam_bucket];
+    if (configured) return { start: configured[0], end: configured[1] };
+    const title = String(unit?.title || '');
+    const m = title.match(/задания?\s+(\d+)(?:\s*[–-]\s*(\d+))?/iu);
+    if (!m) return null;
+    return { start: Number(m[1]), end: Number(m[2] || m[1]) };
+  }
+
+  function examNumberForItem(unit, item, index) {
+    const range = bucketExamRange(unit);
+    const local = Number(item?.group_position || index + 1 || 1);
+    if (!range) return local;
+
+    // If the source already carries a real exam number rather than a local 1..N,
+    // preserve it. Local group labels are remapped to the exam range below.
+    const labelMatch = String(item?.display_label || '').match(/(?:Задание\s*)?(\d{1,2})/iu);
+    if (labelMatch) {
+      const n = Number(labelMatch[1]);
+      const groupSize = Math.max(1, range.end - range.start + 1);
+      const looksLocal = range.start > 1 && n >= 1 && n <= groupSize;
+      if (!looksLocal && n >= 1 && n <= 50) return n;
+    }
+    return range.start + Math.max(0, local - 1);
+  }
+
   function splitStructuredQuestion(value) {
+    const choice = choiceModelFromTables(value);
+    if (choice) return { question: choice.prompt, rows: choice.options.map(([n,v]) => [`${n})`, v]) };
+
     const rows = structuredTableRows(value);
     if (!rows.length) return { question: '', rows: [] };
-
     const first = rows[0];
     if (first.length >= 2) {
-      const normalized = first.map(cell => backupTextClean(cell).replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru-RU'));
+      const normalized = first.map(cell => instructionCmp(cell));
       const unique = [...new Set(normalized.filter(Boolean))];
       if (unique.length === 1 && unique[0] && !looksLikeInstruction(first[0])) {
         return { question: backupTextClean(first[0]), rows: rows.slice(1) };
@@ -1776,16 +1959,23 @@
     if (unit?.exam_bucket === 'reading_10') {
       labels = ['A','B','C','D','E','F','G'];
       rowLabel = 'Текст';
+    } else if (unit?.exam_bucket === 'reading_11') {
+      labels = ['A','B','C','D','E','F'];
+      rowLabel = 'Пропуск';
     } else if (unit?.exam_bucket === 'listening_1') {
       labels = ['A','B','C','D','E','F'];
       rowLabel = 'Говорящий';
     } else if (unit?.exam_bucket === 'listening_2') {
       labels = ['A','B','C','D','E','F','G'];
       rowLabel = 'Утверждение';
+    } else if (['listening_3_9','reading_12_18','grammar_19_24','wordformation_25_29','vocabulary_30_36'].includes(unit?.exam_bucket)) {
+      const range = bucketExamRange(unit);
+      if (range) labels = Array.from({ length: range.end - range.start + 1 }, (_, i) => String(range.start + i));
     } else {
       return '';
     }
 
+    if (!labels.length) return '';
     return `
       <section class="backup-learning-section backup-answer-section">
         <span class="backup-block-label">ТАБЛИЦА ОТВЕТОВ</span>
@@ -1810,11 +2000,16 @@
   function renderBackupItems(unit, model) {
     if (!model.items.length) return '';
 
-    // A single item already appears above as the main context. Here we only keep
-    // genuinely structured variants/table data underneath it.
     if (model.items.length === 1) {
       const only = model.items[0];
-      const table = renderItemTables(only.item.item_tables);
+      let table = '';
+
+      if (unit?.exam_bucket === 'reading_11') {
+        const choice = choiceModelFromTables(only.item.item_tables);
+        table = renderChoiceRows(choice);
+      } else {
+        table = renderItemTables(only.item.item_tables);
+      }
       if (!table) return '';
 
       const listening2Legend = unit?.exam_bucket === 'listening_2'
@@ -1836,24 +2031,45 @@
       `;
     }
 
+    const grammarLike = ['grammar_19_24','wordformation_25_29'].includes(unit?.exam_bucket);
+    const choiceLike = ['listening_3_9','reading_12_18','vocabulary_30_36'].includes(unit?.exam_bucket);
+
     return `
       <section class="backup-learning-section backup-subtasks-section">
         <span class="backup-block-label">ОТДЕЛЬНЫЕ ЗАДАНИЯ</span>
         <div class="backup-items">
           ${model.items.map(({ item, body }, index) => {
-            const structured = splitStructuredQuestion(item.item_tables);
-            const displayBody = structured.question || body;
+            const examNo = examNumberForItem(unit, item, index);
+            const choice = choiceModelFromTables(item.item_tables);
+            const grammar = grammarLike ? grammarPairFromTables(item.item_tables, body) : null;
+
+            let displayBody = body;
+            let detailHtml = '';
+
+            if (grammar) {
+              displayBody = grammar.text;
+              detailHtml = `<div class="backup-source-word-line"><span>Исходное слово</span><strong>${esc(grammar.source)}</strong></div>`;
+            } else if (choiceLike || choice) {
+              displayBody = choice?.prompt || stripOptionsFromBody(body, choice?.options || []);
+              if (/^\d+[.)]?$/.test(backupTextClean(displayBody))) displayBody = '';
+              detailHtml = renderChoiceRows(choice);
+            } else {
+              const structured = splitStructuredQuestion(item.item_tables);
+              displayBody = structured.question || body;
+              detailHtml = renderStructuredRows(structured.rows);
+            }
+
             return `
               <article class="backup-item-card">
                 <div class="backup-item-head">
                   <div>
-                    <div class="backup-item-number">${esc(item.display_label || `Задание ${item.group_position || index + 1}`)}</div>
+                    <div class="backup-item-number">Задание ${esc(examNo)}</div>
                     <span class="backup-item-ref">FIPI ${esc(item.fipi_id || '—')}</span>
                   </div>
                   <span class="backup-kes">${esc(item.live_kes_code ? `КЭС ${item.live_kes_code}` : 'КЭС —')}</span>
                 </div>
                 ${displayBody ? `<div class="backup-readable-text backup-item-text">${esc(displayBody)}</div>` : ''}
-                ${renderStructuredRows(structured.rows)}
+                ${detailHtml}
               </article>
             `;
           }).join('')}
@@ -2001,6 +2217,9 @@
       .backup-answer-entry-row td { height:11mm; }
       .backup-answer-legend { display:flex; gap:4mm; flex-wrap:wrap; margin:0 0 3mm; }
       .backup-answer-legend span { border:1px solid #aaa; border-radius:2mm; padding:1.5mm 2.5mm; background:#fff; }
+      .backup-source-word-line { display:flex; justify-content:space-between; gap:4mm; margin-top:3mm; padding:2.4mm; border:1px solid #aaa; background:#fff !important; }
+      .backup-source-word-line span { color:#555; font-size:8.5pt; font-weight:700; text-transform:uppercase; }
+      .backup-source-word-line strong { color:#111; }
       .backup-media-grid { display:block; }
       .backup-media-card img { display:block; max-width:100%; max-height:145mm; margin:0 auto; object-fit:contain; }
       .backup-print-media-note { display:block !important; color:#555; font-size:9pt; padding:1mm 0; }
