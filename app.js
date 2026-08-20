@@ -51,6 +51,8 @@
   let currentUser = null;
   let currentAccess = null;
   let runtimeConfig = { content_source: 'fipi', demo_enabled: true, yandex_backup_ready: false };
+  let userSourcePreference = null;
+  let adminManagedUsers = new Map();
 
   let units = [];
   let items = [];
@@ -181,6 +183,31 @@
     adminSourceState: $('#adminSourceState'),
     useFipiSourceButton: $('#useFipiSourceButton'),
     useYandexSourceButton: $('#useYandexSourceButton'),
+    adminBackupReadyButton: $('#adminBackupReadyButton'),
+
+    createEmailAccessButton: $('#createEmailAccessButton'),
+    createVkAccessButton: $('#createVkAccessButton'),
+    emailAccessAdminDialog: $('#emailAccessAdminDialog'),
+    closeEmailAccessAdminDialogButton: $('#closeEmailAccessAdminDialogButton'),
+    emailAccessNameInput: $('#emailAccessNameInput'),
+    emailAccessEmailInput: $('#emailAccessEmailInput'),
+    emailAccessLevelSelect: $('#emailAccessLevelSelect'),
+    emailAccessExpirySelect: $('#emailAccessExpirySelect'),
+    emailAccessAdminError: $('#emailAccessAdminError'),
+    createEmailAccessSubmitButton: $('#createEmailAccessSubmitButton'),
+    vkAccessAdminDialog: $('#vkAccessAdminDialog'),
+    closeVkAccessAdminDialogButton: $('#closeVkAccessAdminDialogButton'),
+    vkAccessNameInput: $('#vkAccessNameInput'),
+    vkAccessIdInput: $('#vkAccessIdInput'),
+    vkAccessSourceSelect: $('#vkAccessSourceSelect'),
+    vkAccessLevelSelect: $('#vkAccessLevelSelect'),
+    vkAccessExpirySelect: $('#vkAccessExpirySelect'),
+    vkAccessAdminError: $('#vkAccessAdminError'),
+    createVkAccessSubmitButton: $('#createVkAccessSubmitButton'),
+    adminCredentialsDialog: $('#adminCredentialsDialog'),
+    closeAdminCredentialsDialogButton: $('#closeAdminCredentialsDialogButton'),
+    adminCredentialsText: $('#adminCredentialsText'),
+    copyAdminCredentialsButton: $('#copyAdminCredentialsButton'),
 
     adminDemoState: $('#adminDemoState'),
     toggleDemoButton: $('#toggleDemoButton'),
@@ -245,6 +272,116 @@
   }
 
 
+  function managedAccessFunctionUrl() {
+    const root = String(CONFIG.supabaseUrl || '').replace(/\/+$/, '');
+    return root ? `${root}/functions/v1/ege-managed-access` : '';
+  }
+
+  async function currentAccessToken() {
+    const { data } = await supabaseClient.auth.getSession();
+    return data?.session?.access_token || '';
+  }
+
+  async function callManagedAccess(body) {
+    const token = await currentAccessToken();
+    if (!token) throw new Error('Нет активной ADMIN-сессии.');
+    const response = await fetch(managedAccessFunctionUrl(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'apikey': configuredKey(),
+      },
+      body: JSON.stringify(body),
+    });
+    let payload = null;
+    try { payload = await response.json(); } catch { payload = null; }
+    if (!response.ok || payload?.ok === false) {
+      const code = payload?.code || `HTTP ${response.status}`;
+      const known = {
+        admin_only: 'Нужны права ADMIN.',
+        invalid_email: 'Проверьте email.',
+        invalid_vk_id: 'Проверьте VK ID: нужны только цифры.',
+        display_name_required: 'Введите имя пользователя.',
+        invalid_expiry: 'Некорректный срок доступа.',
+      };
+      throw new Error(known[code] || code);
+    }
+    return payload;
+  }
+
+  function resolveCreateExpiry(select) {
+    const value = select?.value || 'none';
+    if (value === 'none') return null;
+    const days = Number(value);
+    if (![7,30].includes(days)) return null;
+    return new Date(Date.now() + days * 86400000).toISOString();
+  }
+
+  function clearInlineErrorBox(box) {
+    if (!box) return;
+    box.textContent = '';
+    box.classList.add('hidden');
+  }
+  function showInlineErrorBox(box, text) {
+    if (!box) return;
+    box.textContent = text;
+    box.classList.remove('hidden');
+  }
+
+  function extractAuthUserId(principalKey) {
+    const m = String(principalKey || '').match(/^auth:([0-9a-f-]{36})$/i);
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  function effectiveContentSource() {
+    if (demoMode) return 'fipi';
+    const preferred = userSourcePreference || runtimeConfig.content_source || 'fipi';
+    if (preferred !== 'yandex_backup') return 'fipi';
+    if (runtimeConfig.yandex_backup_ready) return 'yandex_backup';
+    return currentAccess?.role === 'admin' ? 'yandex_backup' : 'fipi';
+  }
+
+  async function loadUserSourcePreference() {
+    userSourcePreference = null;
+    if (!currentUser || currentAccess?.access_level !== 'full') return;
+    try {
+      const { data, error } = await supabaseClient.rpc('ege_my_source_preference_v050');
+      if (!error && ['fipi','yandex_backup'].includes(data)) userSourcePreference = data;
+    } catch (error) {
+      console.warn('EGE source preference unavailable:', error);
+    }
+  }
+
+  async function setUserSourcePreference(source) {
+    if (!currentUser || currentAccess?.access_level !== 'full') return;
+    if (!['fipi','yandex_backup'].includes(source)) return;
+    if (source === 'yandex_backup' && !runtimeConfig.yandex_backup_ready && currentAccess?.role !== 'admin') {
+      showToast('Яндекс-резерв временно выключен администратором');
+      return;
+    }
+    const old = userSourcePreference;
+    userSourcePreference = source;
+    updateSourceBadge();
+    try {
+      const { data, error } = await supabaseClient.rpc('ege_set_my_source_preference_v050', { p_source: source });
+      if (error) throw error;
+      userSourcePreference = data || source;
+      updateSourceBadge();
+      showToast(source === 'yandex_backup' ? '✓ Ваш источник: Яндекс-резерв' : '✓ Ваш источник: ФИПИ');
+    } catch (error) {
+      userSourcePreference = old;
+      updateSourceBadge();
+      showToast(error?.message || 'Не удалось сохранить выбор источника.');
+    }
+  }
+
+  function toggleUserSource() {
+    const next = effectiveContentSource() === 'yandex_backup' ? 'fipi' : 'yandex_backup';
+    void setUserSourcePreference(next);
+  }
+
+
   function formatDateTime(value) {
     if (!value) return '—';
     const d = new Date(value);
@@ -306,7 +443,7 @@
   }
 
   function userDisplayName(row) {
-    return row.display_name || row.email || (row.vk_user_id ? `VK ID ${row.vk_user_id}` : row.principal_key);
+    return row.managed_display_name || row.display_name || row.email || (row.managed_vk_user_id ? `VK ID ${row.managed_vk_user_id}` : (row.vk_user_id ? `VK ID ${row.vk_user_id}` : row.principal_key));
   }
 
   function accessChip(value, extra = '') {
@@ -390,10 +527,11 @@
       <article class="admin-user-card${isSelfAdmin ? ' self-admin-card' : ''}" data-principal="${esc(row.principal_key)}">
         <div class="admin-user-main">
           <div class="admin-user-name" title="${esc(userDisplayName(row))}">${esc(userDisplayName(row))}</div>
-          <div class="admin-user-id">${esc(row.principal_key)}</div>
+          <div class="admin-user-id">${esc(row.managed_vk_user_id ? `VK ID ${row.managed_vk_user_id}` : (row.email || row.principal_key))}</div>
           <div class="admin-user-chips">
-            ${accessChip(row.identity_type)}
+            ${accessChip(row.managed_login_kind === 'vk' ? 'VK ID' : (row.managed_login_kind === 'email' ? 'EMAIL' : row.identity_type))}
             ${accessChip(accessSourceLabel(row.access_source))}
+            ${row.must_change_password ? '<span class="admin-chip pending">TEMP PASSWORD</span>' : ''}
             ${accessChip(row.access_level)}
             ${accessChip(row.status)}
             ${isSelfAdmin ? '<span class="admin-chip self">CURRENT ADMIN</span>' : ''}
@@ -482,9 +620,23 @@
 
   async function refreshAdminParticipants() {
     if (currentAccess?.role !== 'admin') return;
-    const { data, error } = await supabaseClient.rpc('ege_admin_user_directory');
-    if (error) throw error;
-    adminUsers = data || [];
+    const [directoryResult, managedResult] = await Promise.all([
+      supabaseClient.rpc('ege_admin_user_directory'),
+      supabaseClient.rpc('ege_admin_managed_directory_v050')
+    ]);
+    if (directoryResult.error) throw directoryResult.error;
+    if (managedResult.error) throw managedResult.error;
+    adminManagedUsers = new Map((managedResult.data || []).map(row => [String(row.auth_user_id || '').toLowerCase(), row]));
+    adminUsers = (directoryResult.data || []).map(row => {
+      const managed = adminManagedUsers.get(extractAuthUserId(row.principal_key));
+      return managed ? { ...row,
+        managed_login_kind: managed.login_kind,
+        managed_email: managed.email,
+        managed_vk_user_id: managed.vk_user_id,
+        managed_display_name: managed.display_name,
+        must_change_password: managed.must_change_password,
+      } : row;
+    });
     renderAdminParticipants();
   }
 
@@ -670,26 +822,45 @@
   }
 
   function updateSourceBadge() {
-    const backup = runtimeConfig.content_source === 'yandex_backup';
-    el.sourceBadge.textContent = backup ? 'ЯНДЕКС-РЕЗЕРВ' : 'FIPI';
-    el.sourceBadge.title = backup
-      ? 'Navigator использует резервный источник'
-      : 'Navigator открывает официальный источник ФИПИ';
+    const effective = effectiveContentSource();
+    const backup = effective === 'yandex_backup';
+    const fullUser = Boolean(currentAccess?.access_level === 'full' && !demoMode);
+
+    el.sourceBadge.classList.toggle('hidden', !fullUser && !demoMode);
+    el.sourceBadge.disabled = !fullUser;
+    el.sourceBadge.textContent = demoMode ? 'FIPI · DEMO' : (backup ? 'Источник: ЯНДЕКС' : 'Источник: FIPI');
+
+    if (demoMode) {
+      el.sourceBadge.title = 'DEMO открывает официальный источник ФИПИ';
+    } else if (!runtimeConfig.yandex_backup_ready && currentAccess?.role !== 'admin') {
+      el.sourceBadge.title = 'Яндекс-резерв временно выключен администратором · используется ФИПИ';
+    } else if (backup) {
+      el.sourceBadge.title = 'Нажмите, чтобы переключиться на ФИПИ';
+    } else {
+      el.sourceBadge.title = runtimeConfig.yandex_backup_ready || currentAccess?.role === 'admin'
+        ? 'Нажмите, чтобы переключиться на Яндекс-резерв'
+        : 'Яндекс-резерв временно недоступен';
+    }
 
     if (el.adminSourceState) {
-      el.adminSourceState.textContent = backup
-        ? 'Сейчас: Яндекс-резерв · лёгкие внутренние страницы'
-        : 'Сейчас: FIPI · официальный сайт';
-      el.useFipiSourceButton?.classList.toggle('active', !backup);
-      el.useYandexSourceButton?.classList.toggle('active', backup);
+      const availability = runtimeConfig.yandex_backup_ready ? 'ДОСТУПЕН УЧИТЕЛЯМ' : 'ВЫКЛЮЧЕН ДЛЯ УЧИТЕЛЕЙ';
+      const defaultLabel = runtimeConfig.content_source === 'yandex_backup' ? 'Яндекс' : 'FIPI';
+      el.adminSourceState.textContent = `${availability} · источник по умолчанию: ${defaultLabel}`;
+      if (el.adminBackupReadyButton) {
+        el.adminBackupReadyButton.textContent = runtimeConfig.yandex_backup_ready ? 'Резерв: ON' : 'Резерв: OFF';
+        el.adminBackupReadyButton.className = runtimeConfig.yandex_backup_ready ? 'button secondary backup-ready-on' : 'button ghost backup-ready-off';
+      }
+      el.useFipiSourceButton?.classList.toggle('active', runtimeConfig.content_source !== 'yandex_backup');
+      el.useYandexSourceButton?.classList.toggle('active', runtimeConfig.content_source === 'yandex_backup');
       if (el.useYandexSourceButton) {
         el.useYandexSourceButton.disabled = !runtimeConfig.yandex_backup_ready;
         el.useYandexSourceButton.title = runtimeConfig.yandex_backup_ready
-          ? 'Переключить весь EGE Navigator на резерв'
-          : 'Резерв ещё не отмечен как готовый';
+          ? 'Сделать Яндекс источником по умолчанию для пользователей без личного выбора'
+          : 'Сначала включите аварийный рубильник резерва';
       }
     }
   }
+
 
   async function loadRuntimeConfig() {
     if (!supabaseClient) return;
@@ -1556,7 +1727,7 @@
 
       runtimeConfig.content_source = data || source;
       updateSourceBadge();
-      showToast(`✓ Источник переключён: ${label}`);
+      showToast(`✓ Источник по умолчанию: ${label}`);
     } catch (error) {
       console.error('Source switch failed:', error);
       showToast(error?.message || 'Не удалось переключить источник.');
@@ -1564,6 +1735,111 @@
       updateSourceBadge();
     }
   }
+
+  async function toggleBackupReady() {
+    if (currentAccess?.role !== 'admin') return;
+    const next = !runtimeConfig.yandex_backup_ready;
+    if (el.adminBackupReadyButton) el.adminBackupReadyButton.disabled = true;
+    try {
+      const { data, error } = await supabaseClient.rpc('ege_admin_set_backup_ready', { p_ready: next });
+      if (error) throw error;
+      runtimeConfig.yandex_backup_ready = Boolean(data);
+      if (!runtimeConfig.yandex_backup_ready) runtimeConfig.content_source = 'fipi';
+      updateSourceBadge();
+      showToast(runtimeConfig.yandex_backup_ready
+        ? '✓ Яндекс-резерв снова доступен учителям'
+        : 'Яндекс-резерв выключен · учителя автоматически переведены на ФИПИ');
+    } catch (error) {
+      console.error('Backup availability switch failed:', error);
+      showToast(error?.message || 'Не удалось изменить доступность резерва.');
+    } finally {
+      if (el.adminBackupReadyButton) el.adminBackupReadyButton.disabled = false;
+      updateSourceBadge();
+    }
+  }
+
+  function openEmailAccessAdminDialog() {
+    clearInlineErrorBox(el.emailAccessAdminError);
+    el.emailAccessNameInput.value = '';
+    el.emailAccessEmailInput.value = '';
+    el.emailAccessLevelSelect.value = 'full';
+    el.emailAccessExpirySelect.value = 'none';
+    el.emailAccessAdminDialog?.showModal();
+  }
+
+  function openVkAccessAdminDialog() {
+    clearInlineErrorBox(el.vkAccessAdminError);
+    el.vkAccessNameInput.value = '';
+    el.vkAccessIdInput.value = '';
+    el.vkAccessSourceSelect.value = 'donut';
+    el.vkAccessLevelSelect.value = 'full';
+    el.vkAccessExpirySelect.value = 'none';
+    el.vkAccessAdminDialog?.showModal();
+  }
+
+  function managedCredentialsMessage(result) {
+    if (result.kind === 'email') {
+      if (result.existing_auth) {
+        return `Здравствуйте${result.display_name ? `, ${result.display_name}` : ''}!\n\nВам открыт доступ к EGE Navigator.\nEmail: ${result.email}\n\nВаш аккаунт уже существовал, поэтому пароль НЕ менялся. Используйте свой текущий пароль.`;
+      }
+      return `Здравствуйте${result.display_name ? `, ${result.display_name}` : ''}!\n\nДля вас создан доступ к EGE Navigator.\nEmail: ${result.email}\nВременный пароль: ${result.temporary_password}\n\nСохраните данные. После следующего обновления входа Navigator попросит заменить временный пароль на свой.`;
+    }
+    if (result.existing_auth) {
+      return `Здравствуйте${result.display_name ? `, ${result.display_name}` : ''}!\n\nВам добавлен доступ к EGE Navigator.\nVK ID: ${result.vk_user_id}\n\nИспользуется ваш уже существующий Supabase Auth (например, от OGE), поэтому пароль НЕ менялся. Вход по VK ID подключим следующим шагом.`;
+    }
+    return `Здравствуйте${result.display_name ? `, ${result.display_name}` : ''}!\n\nДля вас подготовлен доступ к EGE Navigator.\nVK ID: ${result.vk_user_id}\nВременный пароль: ${result.temporary_password}\n\nВход по VK ID будет подключён следующим шагом. Пока не отправляйте эти данные пользователю.`;
+  }
+
+  function showAdminCredentials(result) {
+    el.adminCredentialsText.textContent = managedCredentialsMessage(result);
+    el.adminCredentialsDialog?.showModal();
+  }
+
+  async function createManagedEmailAccess() {
+    clearInlineErrorBox(el.emailAccessAdminError);
+    const email = el.emailAccessEmailInput.value.trim();
+    if (!email) return showInlineErrorBox(el.emailAccessAdminError, 'Введите email.');
+    el.createEmailAccessSubmitButton.disabled = true;
+    try {
+      const result = await callManagedAccess({
+        action:'create_email_access',
+        email,
+        display_name:el.emailAccessNameInput.value.trim(),
+        access_level:el.emailAccessLevelSelect.value,
+        access_expires_at:resolveCreateExpiry(el.emailAccessExpirySelect),
+      });
+      el.emailAccessAdminDialog.close();
+      showAdminCredentials(result);
+      await refreshAdminParticipants();
+    } catch (error) {
+      showInlineErrorBox(el.emailAccessAdminError, error?.message || 'Не удалось создать доступ.');
+    } finally { el.createEmailAccessSubmitButton.disabled = false; }
+  }
+
+  async function createManagedVkAccess() {
+    clearInlineErrorBox(el.vkAccessAdminError);
+    const vkId = el.vkAccessIdInput.value.trim();
+    const name = el.vkAccessNameInput.value.trim();
+    if (!/^\d{1,15}$/.test(vkId)) return showInlineErrorBox(el.vkAccessAdminError, 'VK ID — только цифры.');
+    if (!name) return showInlineErrorBox(el.vkAccessAdminError, 'Введите имя.');
+    el.createVkAccessSubmitButton.disabled = true;
+    try {
+      const result = await callManagedAccess({
+        action:'create_vk_access',
+        vk_user_id:vkId,
+        display_name:name,
+        source:el.vkAccessSourceSelect.value,
+        access_level:el.vkAccessLevelSelect.value,
+        access_expires_at:resolveCreateExpiry(el.vkAccessExpirySelect),
+      });
+      el.vkAccessAdminDialog.close();
+      showAdminCredentials(result);
+      await refreshAdminParticipants();
+    } catch (error) {
+      showInlineErrorBox(el.vkAccessAdminError, error?.message || 'Не удалось создать VK-доступ.');
+    } finally { el.createVkAccessSubmitButton.disabled = false; }
+  }
+
 
   function revokeBackupObjectUrls() {
     for (const url of activeBackupObjectUrls) {
@@ -3053,7 +3329,7 @@
   }
 
   function openUnit(unit) {
-    if (demoMode || runtimeConfig.content_source === 'fipi') {
+    if (demoMode || effectiveContentSource() === 'fipi') {
       window.open(unit.official_fipi_url, '_blank', 'noopener,noreferrer');
       void markViewed(unit);
       return;
@@ -3120,8 +3396,8 @@
 
     el.cloudBadge.textContent = demoUsesAuth ? `DEMO · INVITED · ${units.length}` : `DEMO · ${units.length}`;
     el.cloudBadge.className = 'cloud-badge demo';
-    el.sourceBadge.textContent = 'FIPI · DEMO';
-    el.sourceBadge.title = 'DEMO всегда открывает только официальные страницы выбранных заданий ФИПИ';
+    userSourcePreference = null;
+    updateSourceBadge();
 
     el.signOutButton.textContent = demoUsesAuth ? 'Выйти' : 'Выйти из DEMO';
     el.modeKicker.textContent = `DEMO · ${units.length} FIXED CARDS · 15 EXAM BUCKETS`;
@@ -3167,6 +3443,7 @@
     el.cloudBadge.textContent = access.role === 'admin' ? 'ADMIN · FULL' : 'FULL';
     el.cloudBadge.className = 'cloud-badge live';
     el.adminButton.classList.toggle('hidden', access.role !== 'admin');
+    el.sourceBadge.classList.remove('hidden');
     el.modeKicker.textContent = access.role === 'admin'
       ? 'ADMIN · TOPIC-FIRST · 15 EXAM BUCKETS'
       : 'TOPIC-FIRST · 15 EXAM BUCKETS';
@@ -3178,6 +3455,7 @@
     stopAdminAutoRefresh();
 
     currentAccess = null;
+    userSourcePreference = null;
     demoMode = false;
     demoUsesAuth = false;
     document.body.classList.remove('demo-workspace');
@@ -3205,6 +3483,7 @@
     el.accessGate.classList.remove('hidden');
     el.signOutButton.classList.add('hidden');
     el.adminButton.classList.add('hidden');
+    el.sourceBadge.classList.add('hidden');
     el.cloudBadge.textContent = 'PROTECTED';
     el.cloudBadge.className = 'cloud-badge protected';
   }
@@ -3281,6 +3560,8 @@
       await registerLoginOnce(user);
       enterApp(access);
       await loadRuntimeConfig();
+      await loadUserSourcePreference();
+      updateSourceBadge();
       await loadCatalog();
       await touchPresence();
     } catch (e) {
@@ -3457,6 +3738,8 @@
     });
   });
 
+  el.sourceBadge.addEventListener('click', toggleUserSource);
+
   el.closeAdminDialogButton.addEventListener('click', closeAdminPanel);
   el.refreshAdminButton.addEventListener('click', refreshAdminPanel);
   el.participantsTabButton.addEventListener('click', () => setAdminTab('participants'));
@@ -3473,6 +3756,19 @@
 
   el.useFipiSourceButton.addEventListener('click', () => setContentSource('fipi'));
   el.useYandexSourceButton.addEventListener('click', () => setContentSource('yandex_backup'));
+  el.adminBackupReadyButton?.addEventListener('click', toggleBackupReady);
+
+  el.createEmailAccessButton?.addEventListener('click', openEmailAccessAdminDialog);
+  el.createVkAccessButton?.addEventListener('click', openVkAccessAdminDialog);
+  el.closeEmailAccessAdminDialogButton?.addEventListener('click', () => el.emailAccessAdminDialog.close());
+  el.closeVkAccessAdminDialogButton?.addEventListener('click', () => el.vkAccessAdminDialog.close());
+  el.createEmailAccessSubmitButton?.addEventListener('click', createManagedEmailAccess);
+  el.createVkAccessSubmitButton?.addEventListener('click', createManagedVkAccess);
+  el.closeAdminCredentialsDialogButton?.addEventListener('click', () => el.adminCredentialsDialog.close());
+  el.copyAdminCredentialsButton?.addEventListener('click', async () => {
+    const ok = await copyText(el.adminCredentialsText?.textContent || '');
+    showToast(ok ? '✓ Сообщение скопировано' : 'Не удалось скопировать сообщение');
+  });
 
   el.toggleDemoButton.addEventListener('click', toggleDemoEnabled);
   el.previewDemoButton.addEventListener('click', previewPublicDemo);

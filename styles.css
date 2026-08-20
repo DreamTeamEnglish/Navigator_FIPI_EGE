@@ -2033,3 +2033,52 @@ select option { background: #062b20; color: #effbf7; }
     grid-template-columns: 1fr;
   }
 }
+
+
+/* v0.5.0 — ADMIN + personal source choice */
+.source-toggle {
+  cursor: pointer;
+  appearance: none;
+  font-family: inherit;
+  transition: transform .14s ease, border-color .14s ease, background .14s ease;
+}
+.source-toggle:not(:disabled):hover { transform: translateY(-1px); border-color: rgba(217,175,74,.58); }
+.source-toggle:disabled { cursor: default; opacity: .72; }
+
+.admin-source-panel-v050 { align-items: stretch; }
+.admin-source-note { color:#82a99a; font-size:9px; line-height:1.4; max-width:620px; }
+.admin-source-actions-v050 { align-items:center; }
+.admin-default-source-group { display:grid; gap:4px; }
+.admin-default-source-group > span { color:#789c8e; font-size:8px; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }
+.admin-default-source-group > div { display:flex; gap:5px; }
+.compact-source { min-width:112px; min-height:42px; }
+.backup-ready-on { border-color:rgba(57,194,142,.35) !important; color:#c9f4e4 !important; background:rgba(32,143,102,.10) !important; }
+.backup-ready-off { border-color:rgba(226,90,84,.26) !important; color:#ffb7b1 !important; }
+
+.admin-create-access-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:9px; }
+.admin-create-access-card {
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:10px 11px; border:1px solid rgba(159,200,185,.14); border-radius:11px;
+  background:rgba(255,255,255,.025);
+}
+.admin-create-access-card > div { display:grid; gap:3px; min-width:0; }
+.admin-create-access-card strong { color:#e9f4ef; font-size:11px; }
+.admin-create-access-card span { color:#88aa9d; font-size:9px; line-height:1.38; }
+.admin-create-access-card .button { flex:0 0 auto; min-height:34px; padding-inline:11px; font-size:9px; }
+
+.managed-access-card { width:min(600px, calc(100vw - 28px)); }
+.managed-access-card select, .managed-access-card input { width:100%; }
+.managed-credentials-text {
+  min-height:190px; max-height:340px; overflow:auto; white-space:pre-wrap; word-break:break-word;
+  padding:14px; margin:14px 0; border-radius:12px; border:1px solid rgba(217,175,74,.34);
+  background:#061d16; color:#e7f1ed; font:500 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.credentials-card .dialog-note { margin-top:10px; font-size:10px; color:#83a79a; }
+
+@media (max-width: 780px) {
+  .admin-create-access-grid { grid-template-columns:1fr; }
+  .admin-source-actions-v050 { width:100%; flex-wrap:wrap; }
+  .admin-default-source-group { width:100%; }
+  .admin-default-source-group > div { width:100%; }
+  .compact-source { flex:1 1 0; }
+}

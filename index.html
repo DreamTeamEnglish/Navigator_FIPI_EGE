@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <title>EGE Navigator · FIPI · DreamTeam English</title>
-  <link rel="stylesheet" href="styles.css?v=042-speaking-1">
+  <link rel="stylesheet" href="styles.css?v=050-admin-source-1">
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -24,7 +24,7 @@
     </div>
 
     <div class="auth-area">
-      <span id="sourceBadge" class="cloud-badge source">FIPI</span>
+      <button id="sourceBadge" class="cloud-badge source source-toggle hidden" type="button">Источник: FIPI</button>
       <span id="cloudBadge" class="cloud-badge protected">PROTECTED</span>
       <button id="adminButton" class="button secondary hidden" type="button">⚙ ADMIN</button>
       <button id="signOutButton" class="button ghost hidden" type="button">Выйти</button>
@@ -242,20 +242,21 @@
       </div>
 
 
-      <section class="admin-source-panel">
+      <section class="admin-source-panel admin-source-panel-v050">
         <div class="admin-source-copy">
-          <span class="admin-source-title">ИСТОЧНИК ЗАДАНИЙ</span>
+          <span class="admin-source-title">ЯНДЕКС-РЕЗЕРВ · АВАРИЙНЫЙ РУБИЛЬНИК</span>
           <span id="adminSourceState" class="admin-source-state">—</span>
+          <small class="admin-source-note">Если резерв выключен, все учителя автоматически открывают ФИПИ. ADMIN при этом может продолжать проверять резерв.</small>
         </div>
-        <div class="admin-source-actions">
-          <button id="useFipiSourceButton" class="source-choice-button" type="button">
-            <span>FIPI</span>
-            <small>официальный сайт</small>
-          </button>
-          <button id="useYandexSourceButton" class="source-choice-button" type="button">
-            <span>Яндекс-резерв</span>
-            <small>текст + сохранённые media</small>
-          </button>
+        <div class="admin-source-actions admin-source-actions-v050">
+          <button id="adminBackupReadyButton" class="button secondary" type="button">Резерв: —</button>
+          <div class="admin-default-source-group">
+            <span>По умолчанию</span>
+            <div>
+              <button id="useFipiSourceButton" class="source-choice-button compact-source" type="button"><span>FIPI</span><small>официальный сайт</small></button>
+              <button id="useYandexSourceButton" class="source-choice-button compact-source" type="button"><span>Яндекс</span><small>резерв</small></button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -281,8 +282,18 @@
       </div>
 
       <section id="participantsPanel" class="admin-panel">
+        <div class="admin-create-access-grid">
+          <div class="admin-create-access-card">
+            <div><strong>Email-доступ по приглашению</strong><span>Новый Auth создаётся только если такого email ещё нет. Существующий аккаунт переиспользуется без смены пароля.</span></div>
+            <button id="createEmailAccessButton" class="button secondary" type="button">+ Email-доступ</button>
+          </div>
+          <div class="admin-create-access-card">
+            <div><strong>VK ID-доступ</strong><span>Если этот VK ID уже подключён к ОГЭ, используется тот же Supabase Auth — второй пользователь не создаётся.</span></div>
+            <button id="createVkAccessButton" class="button secondary" type="button">+ VK-доступ</button>
+          </div>
+        </div>
         <div class="admin-panel-note">
-          Здесь остаются все пользователи EGE: входившие хотя бы раз и приглашённые, которые ещё не входили.
+          Здесь остаются все пользователи EGE: входившие хотя бы раз и приглашённые, которые ещё не входили. Права ЕГЭ хранятся отдельно от ОГЭ.
         </div>
         <div id="participantsList" class="admin-user-list"></div>
       </section>
@@ -294,6 +305,48 @@
         </div>
         <div id="onlineList" class="admin-user-list"></div>
       </section>
+    </div>
+  </dialog>
+
+  <dialog id="emailAccessAdminDialog" class="dialog-shell">
+    <div class="dialog-card managed-access-card">
+      <button id="closeEmailAccessAdminDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+      <span class="gold-kicker">EGE ADMIN · EMAIL ACCESS</span>
+      <h3>Создать доступ по email</h3>
+      <p>Если аккаунт уже существует в Supabase Auth, Navigator просто добавит ему право EGE — пароль не изменится.</p>
+      <label><span>Имя · необязательно</span><input id="emailAccessNameInput" type="text" maxlength="160" placeholder="Анна Иванова"></label>
+      <label><span>Email</span><input id="emailAccessEmailInput" type="email" placeholder="teacher@example.com"></label>
+      <label><span>Уровень доступа</span><select id="emailAccessLevelSelect"><option value="full">FULL · полный каталог</option><option value="demo">DEMO</option></select></label>
+      <label><span>Срок</span><select id="emailAccessExpirySelect"><option value="none">Бессрочно</option><option value="7">+ 7 дней</option><option value="30">+ 30 дней</option></select></label>
+      <div id="emailAccessAdminError" class="auth-error hidden"></div>
+      <button id="createEmailAccessSubmitButton" class="button primary wide" type="button">Создать доступ</button>
+    </div>
+  </dialog>
+
+  <dialog id="vkAccessAdminDialog" class="dialog-shell">
+    <div class="dialog-card managed-access-card">
+      <button id="closeVkAccessAdminDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+      <span class="gold-kicker">EGE ADMIN · VK ID ACCESS</span>
+      <h3>Создать доступ по VK ID</h3>
+      <p>Существующий OGE/VK Auth будет переиспользован. ОГЭ при этом не изменяется.</p>
+      <label><span>Имя</span><input id="vkAccessNameInput" type="text" maxlength="160" placeholder="Анна Иванова"></label>
+      <label><span>VK ID</span><input id="vkAccessIdInput" type="text" inputmode="numeric" placeholder="123456789"></label>
+      <label><span>Источник доступа</span><select id="vkAccessSourceSelect"><option value="donut">VK Donut</option><option value="invite">По приглашению</option></select></label>
+      <label><span>Уровень доступа</span><select id="vkAccessLevelSelect"><option value="full">FULL · полный каталог</option><option value="demo">DEMO</option></select></label>
+      <label><span>Срок</span><select id="vkAccessExpirySelect"><option value="none">Бессрочно</option><option value="7">+ 7 дней</option><option value="30">+ 30 дней</option></select></label>
+      <div id="vkAccessAdminError" class="auth-error hidden"></div>
+      <button id="createVkAccessSubmitButton" class="button primary wide" type="button">Создать доступ</button>
+    </div>
+  </dialog>
+
+  <dialog id="adminCredentialsDialog" class="dialog-shell">
+    <div class="dialog-card managed-access-card credentials-card">
+      <button id="closeAdminCredentialsDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+      <span class="gold-kicker">ДОСТУП ГОТОВ</span>
+      <h3>Отправьте пользователю</h3>
+      <pre id="adminCredentialsText" class="managed-credentials-text"></pre>
+      <button id="copyAdminCredentialsButton" class="button primary wide" type="button">Скопировать сообщение</button>
+      <p class="dialog-note">Если аккаунт уже существовал, новый пароль специально не создаётся: пользователь продолжает использовать свой текущий пароль.</p>
     </div>
   </dialog>
 
@@ -365,6 +418,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=042-speaking-1"></script>
+  <script src="app.js?v=050-admin-source-1"></script>
 </body>
 </html>
