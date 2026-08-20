@@ -173,6 +173,7 @@
     backupTaskTitle: $('#backupTaskTitle'),
     backupTaskMeta: $('#backupTaskMeta'),
     backupOfficialLink: $('#backupOfficialLink'),
+    printBackupTaskButton: $('#printBackupTaskButton'),
     backupTaskBody: $('#backupTaskBody'),
   };
 
@@ -800,7 +801,7 @@
       ),
       fetchAllRows(
         'ege_items',
-        'id,unit_id,card_key,fipi_id,display_label,group_position,live_kes_code,item_text,sort_order',
+        'id,unit_id,card_key,fipi_id,display_label,group_position,live_kes_code,item_text,item_tables,sort_order',
         'sort_order'
       ),
       fetchAllRows(
@@ -1559,17 +1560,25 @@
       .filter(x => x.media);
   }
 
+  function backupTextClean(value) {
+    return String(value ?? '')
+      .replace(/ShowPictureQ\w*\([^)]*\);?/giu, ' ')
+      .replace(/\bi\s+Номер:\s*[A-Z0-9]+(?:\s+\d+\s*\([A-Z0-9]+\))?\s+Статус задания:\s*НЕ РЕШЕНО\b/giu, ' ')
+      .replace(/\r/g, '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n[ \t]+/g, '\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
   function readableJson(value, depth = 0) {
     if (value === null || value === undefined || value === '') return [];
     if (typeof value === 'string') {
       const text = value.trim();
       if (!text) return [];
-      try {
-        const parsed = JSON.parse(text);
-        return readableJson(parsed, depth);
-      } catch {
-        return [text];
-      }
+      try { return readableJson(JSON.parse(text), depth); }
+      catch { return [backupTextClean(text)].filter(Boolean); }
     }
     if (Array.isArray(value)) {
       const out = [];
@@ -1577,71 +1586,191 @@
       return [...new Set(out.filter(Boolean))];
     }
     if (typeof value === 'object') {
+      if (Array.isArray(value.paragraphs)) return readableJson(value.paragraphs, depth + 1);
+      if (typeof value.plain_text === 'string' && value.plain_text.trim()) {
+        return value.plain_text.split(/\n{2,}/).map(backupTextClean).filter(Boolean);
+      }
       const out = [];
       for (const [key, val] of Object.entries(value)) {
-        const lines = readableJson(val, depth + 1);
-        if (!lines.length) continue;
-        if (lines.length === 1 && typeof val !== 'object') out.push(`${key}: ${lines[0]}`);
-        else out.push(...lines);
+        if (['format','plain_text'].includes(key)) continue;
+        out.push(...readableJson(val, depth + 1));
       }
       return [...new Set(out.filter(Boolean))];
     }
     return [String(value)];
   }
 
-  function renderSharedContext(unit) {
-    const lines = readableJson(unit.shared_context);
-    if (!lines.length) return '';
+  function looksLikeInstruction(text) {
+    const t = backupTextClean(text);
+    if (!t || t.length > 1300) return false;
+    return /^(?:Прочитайте|Прослушайте|Вы услышите|Установите|Определите|Выберите|Впишите|Запишите|Дайте|В заданиях|Выполните|Imagine\b|Task\s*\d+\b|You (?:have|are|will)\b)/iu.test(t);
+  }
+
+  function splitItemInstruction(item, unit) {
+    let text = backupTextClean(item?.item_text || '');
+    text = text.replace(/^Задание\s*№\s*\d+\.\s*/iu, '').trim();
+    if (!text) return { instruction: '', body: '' };
+
+    if (unit?.exam_bucket === 'reading_10') {
+      const m = text.match(/^(.*?В задании один заголовок лишний\.)\s*/isu);
+      if (m) return { instruction: backupTextClean(m[1]), body: backupTextClean(text.slice(m[0].length)) };
+    }
+
+    const leadPatterns = [
+      /^Установите соответствие и впишите ответ\.\s*/iu,
+      /^Дайте развернутый ответ\.\s*/iu,
+      /^Выберите правильный ответ\.\s*/iu,
+      /^Впишите правильный ответ\.\s*/iu,
+      /^Запишите правильный ответ\.\s*/iu,
+    ];
+    for (const re of leadPatterns) {
+      const m = text.match(re);
+      if (m) return { instruction: backupTextClean(m[0]), body: backupTextClean(text.slice(m[0].length)) };
+    }
+
+    const firstSentence = text.match(/^(.{1,650}?[.!?])\s+(?=[A-ZА-ЯЁ0-9«“])/u);
+    if (firstSentence && looksLikeInstruction(firstSentence[1])) {
+      return { instruction: backupTextClean(firstSentence[1]), body: backupTextClean(text.slice(firstSentence[0].length)) };
+    }
+    return { instruction: '', body: text };
+  }
+
+  function unitViewerModel(unit) {
+    const arr = (itemsByUnit.get(unit.id) || []).slice().sort((a,b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const shared = readableJson(unit.shared_context);
+    const sharedInstruction = [];
+    const sharedContext = [];
+    for (const part of shared) (looksLikeInstruction(part) ? sharedInstruction : sharedContext).push(part);
+
+    const itemModels = arr.map(item => ({ item, ...splitItemInstruction(item, unit) }));
+    const instructionParts = [...sharedInstruction];
+    for (const row of itemModels) {
+      if (row.instruction && !instructionParts.some(x => x === row.instruction)) instructionParts.push(row.instruction);
+    }
+
+    // For a single-card unit the remaining item body is the main task material.
+    // For grouped units every remaining body stays with its own subtask.
+    const singleContext = itemModels.length === 1 && itemModels[0].body ? [itemModels[0].body] : [];
+    return {
+      items: itemModels,
+      instruction: [...new Set(instructionParts)].join('\n\n'),
+      context: [...new Set([...sharedContext, ...singleContext].filter(Boolean))]
+    };
+  }
+
+  function renderInstructionSection(model) {
+    if (!model.instruction) return '';
     return `
-      <section class="backup-context-card">
-        <span class="backup-block-label">ОБЩИЙ КОНТЕКСТ ГРУППЫ</span>
-        <div class="backup-readable-text">${lines.map(x => esc(x)).join('\n\n')}</div>
+      <section class="backup-learning-section backup-instruction-section">
+        <span class="backup-block-label">ИНСТРУКЦИЯ</span>
+        <div class="backup-readable-text backup-instruction-text">${esc(model.instruction)}</div>
       </section>
     `;
   }
 
+  function renderContextSection(model) {
+    if (!model.context.length) return '';
+    return `
+      <section class="backup-learning-section backup-context-card">
+        <span class="backup-block-label">МАТЕРИАЛ ЗАДАНИЯ</span>
+        <div class="backup-readable-text backup-context-text">${model.context.map(x => esc(x)).join('\n\n')}</div>
+      </section>
+    `;
+  }
+
+  function tableLeafRows(value, out = []) {
+    if (!Array.isArray(value)) return out;
+    const scalar = value.every(cell => !Array.isArray(cell) && (cell === null || ['string','number','boolean'].includes(typeof cell)));
+    if (scalar) {
+      const cells = value.map(x => backupTextClean(x)).filter(Boolean);
+      if (cells.length) out.push(cells);
+      return out;
+    }
+    for (const part of value) tableLeafRows(part, out);
+    return out;
+  }
+
+  function structuredTableRows(value) {
+    const rows = tableLeafRows(value);
+    const seen = new Set();
+    const clean = [];
+    for (const cells of rows) {
+      if (cells.some(c => /^КЭС:|^Тип ответа:/iu.test(c))) continue;
+      if (cells.some(c => /ShowPictureQ/iu.test(c))) continue;
+      const normalized = cells.join(' | ').replace(/\s+/g,' ').trim();
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      // One-cell rows are usually duplicates of the visible task text, not a table.
+      if (cells.length < 2) continue;
+      clean.push(cells);
+    }
+    // Prefer concise rows: imported FIPI tables often contain one giant duplicate row
+    // followed by the actual two-column rows we need.
+    const concise = clean.filter(cells => cells.length <= 5 && cells.join(' ').length <= 1200);
+    return (concise.length ? concise : clean).slice(0, 40);
+  }
+
   function renderItemTables(value) {
-    const lines = readableJson(value);
-    if (!lines.length) return '';
+    const rows = structuredTableRows(value);
+    if (!rows.length) return '';
+    const width = Math.max(...rows.map(r => r.length));
     return `
-      <div class="backup-json-table">
-        ${lines.map(line => `<div class="backup-json-row">${esc(line)}</div>`).join('')}
+      <div class="backup-table-wrap">
+        <table class="backup-task-table">
+          <tbody>
+            ${rows.map(row => `<tr>${row.map(cell => `<td${row.length < width ? ` colspan="${width - row.length + 1}"` : ''}>${esc(cell)}</td>`).join('')}</tr>`).join('')}
+          </tbody>
+        </table>
       </div>
     `;
   }
 
-  function renderBackupItems(unit) {
-    const arr = itemsByUnit.get(unit.id) || [];
-    return `
-      <div class="backup-items">
-        ${arr.map((item, index) => `
-          <article class="backup-item-card">
-            <div class="backup-item-head">
-              <span class="backup-item-ref">${esc(item.display_label || `Задание ${item.fipi_id}`)}</span>
-              <span class="backup-kes">${esc(item.live_kes_code ? `КЭС ${item.live_kes_code}` : 'КЭС —')}</span>
-            </div>
-            <div class="backup-readable-text">${esc(item.item_text || 'Текст задания отсутствует.')}</div>
-            ${renderItemTables(item.item_tables)}
-          </article>
-        `).join('')}
-      </div>
-    `;
-  }
+  function renderBackupItems(unit, model) {
+    if (!model.items.length) return '';
 
-  function renderMediaCards(unit) {
-    const rows = backupMediaForUnit(unit.id);
-    if (!rows.length) {
+    // A single item already appears above as the main context. Here we only keep
+    // genuinely structured variants/table data underneath it.
+    if (model.items.length === 1) {
+      const only = model.items[0];
+      const table = renderItemTables(only.item.item_tables);
+      if (!table) return '';
       return `
-        <section class="backup-media-section">
-          <span class="backup-block-label">MEDIA</span>
-          <div class="backup-empty-media">Для этого unit сохранённых media нет.</div>
+        <section class="backup-learning-section backup-options-section">
+          <span class="backup-block-label">ВАРИАНТЫ / ТАБЛИЦА</span>
+          ${table}
         </section>
       `;
     }
 
     return `
-      <section class="backup-media-section">
-        <span class="backup-block-label">СОХРАНЁННЫЕ MEDIA · ЯНДЕКС ДИСК</span>
+      <section class="backup-learning-section backup-subtasks-section">
+        <span class="backup-block-label">ОТДЕЛЬНЫЕ ЗАДАНИЯ</span>
+        <div class="backup-items">
+          ${model.items.map(({ item, body }, index) => `
+            <article class="backup-item-card">
+              <div class="backup-item-head">
+                <div>
+                  <div class="backup-item-number">${esc(item.display_label || `Задание ${item.group_position || index + 1}`)}</div>
+                  <span class="backup-item-ref">FIPI ${esc(item.fipi_id || '—')}</span>
+                </div>
+                <span class="backup-kes">${esc(item.live_kes_code ? `КЭС ${item.live_kes_code}` : 'КЭС —')}</span>
+              </div>
+              ${body ? `<div class="backup-readable-text backup-item-text">${esc(body)}</div>` : ''}
+              ${renderItemTables(item.item_tables)}
+            </article>
+          `).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderMediaCards(unit) {
+    const rows = backupMediaForUnit(unit.id);
+    if (!rows.length) return '';
+
+    return `
+      <section class="backup-learning-section backup-media-section">
+        <span class="backup-block-label">МЕДИА К ЗАДАНИЮ</span>
         <div class="backup-media-grid">
           ${rows.map(({ media }, idx) => {
             const ready = Boolean(media.backup_ready && media.backup_path);
@@ -1649,13 +1778,13 @@
             return `
               <article class="backup-media-card ${kind === 'image' ? 'image-card' : ''}" data-backup-media-card="${esc(media.media_id)}">
                 <div class="backup-media-head">
-                  <span class="backup-media-kind">${esc(kind)} ${idx + 1}</span>
-                  <span class="backup-media-status">${ready ? 'резерв готов' : 'резерв недоступен'}</span>
+                  <span class="backup-media-kind">${esc(kind === 'audio' ? 'Аудио' : kind === 'image' ? 'Изображение' : kind === 'video' ? 'Видео' : 'Media')} ${idx + 1}</span>
+                  <span class="backup-media-status">${ready ? 'Яндекс-резерв' : 'недоступно'}</span>
                 </div>
                 <div class="backup-media-slot" data-backup-media-slot="${esc(media.media_id)}">
                   ${ready
-                    ? `<button class="backup-media-load" type="button" data-load-backup-media="${esc(media.media_id)}">Загрузить ${kind === 'audio' ? 'аудио' : kind === 'image' ? 'изображение' : 'media'}</button>`
-                    : `<div class="backup-media-error">Этот файл входит в 4 недоступных/повреждённых assets. Текст задания всё равно сохранён.</div>`}
+                    ? `<div class="backup-loading"><div class="backup-spinner"></div>Загружаю…</div>`
+                    : `<div class="backup-media-error">Резервный файл недоступен. Текст задания сохранён.</div>`}
                 </div>
               </article>
             `;
@@ -1671,9 +1800,7 @@
     if (!token) throw new Error('Сессия Supabase не найдена.');
 
     const url = `${CONFIG.supabaseUrl.replace(/\/$/,'')}/functions/v1/ege-backup-gateway?media_id=${encodeURIComponent(mediaId)}`;
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       throw new Error(`${response.status}: ${text || 'резервный файл недоступен'}`);
@@ -1684,59 +1811,57 @@
   async function loadBackupMedia(mediaId) {
     const m = mediaById.get(mediaId);
     const slot = el.backupTaskBody.querySelector(`[data-backup-media-slot="${CSS.escape(mediaId)}"]`);
-    if (!m || !slot) return;
-
-    slot.innerHTML = '<div class="backup-loading"><div class="backup-spinner"></div>Загружаю с приватного Яндекс Диска…</div>';
+    if (!m || !slot || slot.dataset.loaded === '1') return;
 
     try {
       const blob = await gatewayFetchMedia(mediaId);
       const objectUrl = URL.createObjectURL(blob);
       activeBackupObjectUrls.push(objectUrl);
+      slot.dataset.loaded = '1';
 
       if (m.kind === 'image') {
         slot.innerHTML = `<img src="${esc(objectUrl)}" alt="Изображение задания">`;
       } else if (m.kind === 'audio') {
-        slot.innerHTML = `<audio controls preload="metadata" src="${esc(objectUrl)}"></audio>`;
+        slot.innerHTML = `<audio controls preload="metadata" src="${esc(objectUrl)}"></audio><div class="backup-print-media-note">Аудио к заданию доступно в электронной версии Navigator.</div>`;
       } else if (m.kind === 'video') {
-        slot.innerHTML = `<video controls preload="metadata" src="${esc(objectUrl)}"></video>`;
+        slot.innerHTML = `<video controls preload="metadata" src="${esc(objectUrl)}"></video><div class="backup-print-media-note">Видео к заданию доступно в электронной версии Navigator.</div>`;
       } else {
-        slot.innerHTML = `<a class="button secondary wide" href="${esc(objectUrl)}" target="_blank" rel="noopener noreferrer">Открыть media</a>`;
+        slot.innerHTML = `<a class="button secondary wide backup-media-open" href="${esc(objectUrl)}" target="_blank" rel="noopener noreferrer">Открыть media</a><div class="backup-print-media-note">Дополнительный media-файл доступен в электронной версии Navigator.</div>`;
       }
     } catch (error) {
       console.error('Backup media load failed:', error);
-      slot.innerHTML = `
-        <div class="backup-media-error">
-          Не удалось загрузить media с Яндекс Диска.<br>
-          ${esc(error?.message || error)}
-        </div>
-      `;
+      slot.innerHTML = `<div class="backup-media-error">Не удалось загрузить media с Яндекс Диска.<br>${esc(error?.message || error)}</div>`;
     }
   }
 
-  function bindBackupMediaButtons() {
-    el.backupTaskBody.querySelectorAll('[data-load-backup-media]').forEach(btn => {
-      btn.addEventListener('click', () => loadBackupMedia(btn.dataset.loadBackupMedia));
-    });
+  async function loadAllBackupMedia(unit) {
+    const rows = backupMediaForUnit(unit.id).filter(({ media }) => media.backup_ready && media.backup_path);
+    await Promise.allSettled(rows.map(({ media }) => loadBackupMedia(media.media_id)));
+  }
+
+  function printBackupTask() {
+    document.body.classList.add('printing-backup-task');
+    window.print();
   }
 
   async function openBackupUnit(unit) {
     revokeBackupObjectUrls();
 
+    const model = unitViewerModel(unit);
     el.backupTaskTitle.textContent = unitTitle(unit);
-    el.backupTaskMeta.textContent = `${unitReference(unit)} · ${BUCKET_MAP.get(unit.exam_bucket)?.label || unit.exam_bucket} · ${unitKes(unit)}`;
+    el.backupTaskMeta.textContent = `${unitReference(unit)} · ${unitKes(unit)}`;
     el.backupOfficialLink.href = unit.official_fipi_url;
     el.backupTaskBody.innerHTML = `
-      ${renderSharedContext(unit)}
-      ${renderBackupItems(unit)}
+      ${renderInstructionSection(model)}
       ${renderMediaCards(unit)}
+      ${renderContextSection(model)}
+      ${renderBackupItems(unit, model)}
     `;
 
-    bindBackupMediaButtons();
-
-    if (typeof el.backupTaskDialog.showModal === 'function') {
-      el.backupTaskDialog.showModal();
-    }
+    if (typeof el.backupTaskDialog.showModal === 'function') el.backupTaskDialog.showModal();
     await markViewed(unit);
+    // Media loads automatically, exactly like the OGE reserve viewer.
+    void loadAllBackupMedia(unit);
   }
 
   function openUnit(unit) {
@@ -2168,7 +2293,12 @@
     revokeBackupObjectUrls();
     el.backupTaskDialog.close();
   });
-  el.backupTaskDialog.addEventListener('close', revokeBackupObjectUrls);
+  el.printBackupTaskButton?.addEventListener('click', printBackupTask);
+  window.addEventListener('afterprint', () => document.body.classList.remove('printing-backup-task'));
+  el.backupTaskDialog.addEventListener('close', () => {
+    document.body.classList.remove('printing-backup-task');
+    revokeBackupObjectUrls();
+  });
 
   el.closeTopicEditorButton.addEventListener('click', () => el.topicEditorDialog.close());
   el.addManualTopicRowButton.addEventListener('click', () => {

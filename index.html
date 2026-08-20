@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <title>EGE Navigator · FIPI · DreamTeam English</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=036-backup-viewer">
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -168,13 +168,14 @@
 
       <div class="backup-task-head">
         <div>
-          <span class="gold-kicker">ЯНДЕКС-РЕЗЕРВ · LIGHT TASK VIEW</span>
+          <span class="gold-kicker">ЯНДЕКС-РЕЗЕРВ · УЧЕБНАЯ СТРАНИЦА</span>
           <h3 id="backupTaskTitle">Задание ЕГЭ</h3>
           <p id="backupTaskMeta" class="backup-task-meta"></p>
         </div>
-        <a id="backupOfficialLink" class="button ghost backup-official-link" href="#" target="_blank" rel="noopener noreferrer">
-          Оригинал ФИПИ ↗
-        </a>
+        <div class="backup-task-actions">
+          <button id="printBackupTaskButton" class="button secondary backup-print-button" type="button">Печать</button>
+          <a id="backupOfficialLink" class="button ghost backup-official-link" href="#" target="_blank" rel="noopener noreferrer">Оригинал ФИПИ ↗</a>
+        </div>
       </div>
 
       <div id="backupTaskBody" class="backup-task-body"></div>
@@ -364,6 +365,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=036-backup-viewer"></script>
 </body>
 </html>
