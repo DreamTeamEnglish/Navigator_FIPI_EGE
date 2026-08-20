@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <title>EGE Navigator · FIPI · DreamTeam English</title>
-  <link rel="stylesheet" href="styles.css?v=051-admin-dialogs-1">
+  <link rel="stylesheet" href="styles.css?v=060-unified-login-1">
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -44,13 +44,13 @@
 
       <div class="access-actions">
         <button id="openLoginButton" class="button primary access-main-button" type="button">Войти</button>
-        <button id="openDonutButton" class="button secondary access-main-button" type="button">Войти через VK Donut</button>
+        <button id="openDonutButton" class="button secondary access-main-button hidden" type="button" aria-hidden="true" tabindex="-1">Войти через VK Donut</button>
         <button id="openDemoButton" class="button ghost access-main-button" type="button">Попробовать DEMO</button>
       </div>
 
       <p class="access-note">
-        Самостоятельная email-регистрация отключена. Полный доступ выдаётся администратором
-        или после серверной проверки VK Donut.
+        Один вход для всех: участники VK Donut вводят числовой VK ID, приглашённые пользователи — email.
+        Пароль выдаётся администратором при создании доступа.
       </p>
 
       <a class="admin-contact-link"
@@ -134,21 +134,71 @@
   </footer>
 
   <dialog id="authDialog" class="dialog-shell">
-    <div class="dialog-card">
+    <div class="dialog-card unified-auth-card">
       <button id="closeAuthDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
-      <span class="gold-kicker">INVITE ACCESS</span>
-      <h3>Вход по приглашению</h3>
-      <p>Введите email и пароль приглашённого аккаунта.</p>
+      <span class="gold-kicker">PROTECTED ACCESS · EGE</span>
+      <h3>Вход в Navigator</h3>
+      <p id="authHint">Введите email или VK ID, который вы получили для доступа.</p>
       <label>
-        <span>Email</span>
-        <input id="emailInput" type="email" autocomplete="username">
+        <span>Email или VK ID</span>
+        <input id="loginIdentifierInput" type="text" autocomplete="username" placeholder="teacher@example.com или 123456789">
       </label>
+      <p class="managed-auth-note auth-identity-note">VK Donut → числовой VK ID · приглашение → email.</p>
       <label>
         <span>Пароль</span>
-        <input id="passwordInput" type="password" autocomplete="current-password">
+        <input id="passwordInput" type="password" autocomplete="current-password" placeholder="••••••••">
       </label>
       <div id="authError" class="auth-error hidden"></div>
       <button id="signInButton" class="button primary wide" type="button">Войти</button>
+      <button id="forgotPasswordButton" class="auth-forgot-button" type="button">Забыли пароль?</button>
+      <p class="dialog-note">
+        <a class="admin-contact-link compact-contact"
+           href="https://vk.ru/im?sel=-229391051"
+           target="_blank" rel="noopener noreferrer" data-admin-contact>
+          ✉ Нужен доступ? Напишите администратору
+        </a>
+      </p>
+    </div>
+  </dialog>
+
+  <dialog id="firstPasswordDialog" class="dialog-shell">
+    <div class="dialog-card managed-auth-card">
+      <span class="gold-kicker">ПЕРВЫЙ ВХОД · EGE</span>
+      <h3>Создайте свой пароль</h3>
+      <p>Временный пароль сработал. Теперь придумайте постоянный — такой, который удобно помнить именно вам.</p>
+      <label><span>Новый пароль</span><input id="firstPasswordInput" type="password" autocomplete="new-password" placeholder="Не менее 10 символов"></label>
+      <label><span>Повторите пароль</span><input id="firstPasswordRepeat" type="password" autocomplete="new-password" placeholder="Повторите пароль"></label>
+      <div id="firstPasswordError" class="auth-error hidden"></div>
+      <button id="saveFirstPasswordButton" class="button primary wide" type="button">Сохранить пароль</button>
+      <p class="managed-auth-note">После сохранения временный пароль перестанет действовать, а Navigator выдаст код восстановления.</p>
+    </div>
+  </dialog>
+
+  <dialog id="recoveryDialog" class="dialog-shell">
+    <div class="dialog-card managed-auth-card">
+      <button id="closeRecoveryDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+      <span class="gold-kicker">ВОССТАНОВЛЕНИЕ ДОСТУПА · EGE</span>
+      <h3>Забыли пароль?</h3>
+      <p>Введите email или VK ID, сохранённый код восстановления и сразу придумайте новый пароль.</p>
+      <label><span>Email или VK ID</span><input id="recoveryIdentifierInput" type="text" autocomplete="username" placeholder="teacher@example.com или 123456789"></label>
+      <label><span>Код восстановления</span><input id="recoveryCodeInput" type="text" autocomplete="off" placeholder="DTE-XXXX-XXXX-XXXX-XXXX"></label>
+      <label><span>Новый пароль</span><input id="recoveryPasswordInput" type="password" autocomplete="new-password" placeholder="Не менее 10 символов"></label>
+      <label><span>Повторите пароль</span><input id="recoveryPasswordRepeat" type="password" autocomplete="new-password" placeholder="Повторите пароль"></label>
+      <div id="recoveryError" class="auth-error hidden"></div>
+      <button id="recoverPasswordButton" class="button primary wide" type="button">Сменить пароль и войти</button>
+      <p class="managed-auth-note">Если EGE был добавлен к уже существующему аккаунту и отдельный EGE-код вам не выдавался, используйте восстановление в том Navigator, где аккаунт создавался впервые.</p>
+    </div>
+  </dialog>
+
+  <dialog id="recoveryCodeDialog" class="dialog-shell">
+    <div class="dialog-card recovery-code-card">
+      <span class="gold-kicker">ВАЖНО · СОХРАНИТЕ</span>
+      <h3>Код восстановления</h3>
+      <p>Он понадобится только если вы забудете пароль. Navigator хранит не сам код, а его защищённый отпечаток.</p>
+      <div id="recoveryCodeValue" class="recovery-code-value">DTE-XXXX-XXXX-XXXX-XXXX</div>
+      <button id="copyRecoveryCodeButton" class="button secondary wide" type="button">Скопировать код</button>
+      <button id="confirmRecoveryCodeButton" class="button primary wide" type="button">Я сохранил(а) · продолжить</button>
+      <p class="managed-auth-note">После восстановления будет выдан новый код.</p>
     </div>
   </dialog>
 
@@ -418,6 +468,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=050-admin-source-1"></script>
+  <script src="app.js?v=060-unified-login-1"></script>
 </body>
 </html>

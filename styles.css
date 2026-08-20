@@ -2124,3 +2124,67 @@ select option { background: #062b20; color: #effbf7; }
     min-width: 0;
   }
 }
+
+
+/* v0.6.0 — unified Email / VK ID auth */
+.unified-auth-card,
+.managed-auth-card,
+.recovery-code-card {
+  width: min(590px, calc(100vw - 28px));
+  max-width: none;
+}
+.managed-auth-note,
+.auth-identity-note {
+  margin: 7px 0 13px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.auth-forgot-button {
+  display: block;
+  margin: 12px auto 0;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--gold);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.auth-forgot-button:hover { color: #ffe7a1; }
+.recovery-code-value {
+  margin: 16px 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(224,180,61,.55);
+  border-radius: 14px;
+  background: rgba(1,20,16,.45);
+  color: #fff2bd;
+  font: 800 clamp(18px,3vw,26px)/1.25 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .055em;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+#firstPasswordDialog .dialog-card,
+#recoveryDialog .dialog-card,
+#recoveryCodeDialog .dialog-card,
+#authDialog .dialog-card {
+  max-height: none;
+  overflow: visible;
+}
+@media (max-height: 720px), (max-width: 640px) {
+  #firstPasswordDialog,
+  #recoveryDialog,
+  #recoveryCodeDialog,
+  #authDialog {
+    max-height: calc(100vh - 18px);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  #firstPasswordDialog .dialog-card,
+  #recoveryDialog .dialog-card,
+  #recoveryCodeDialog .dialog-card,
+  #authDialog .dialog-card {
+    min-width: 0;
+  }
+}

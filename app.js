@@ -50,6 +50,9 @@
   let supabaseClient = null;
   let currentUser = null;
   let currentAccess = null;
+  let currentManagedAuth = null;
+  let pendingRecoveryContinuation = null;
+  let pendingRecoveredLogin = null;
   let runtimeConfig = { content_source: 'fipi', demo_enabled: true, yandex_backup_ready: false };
   let userSourcePreference = null;
   let adminManagedUsers = new Map();
@@ -125,10 +128,32 @@
 
     authDialog: $('#authDialog'),
     closeAuthDialogButton: $('#closeAuthDialogButton'),
-    emailInput: $('#emailInput'),
+    authHint: $('#authHint'),
+    loginIdentifierInput: $('#loginIdentifierInput'),
     passwordInput: $('#passwordInput'),
     signInButton: $('#signInButton'),
+    forgotPasswordButton: $('#forgotPasswordButton'),
     authError: $('#authError'),
+
+    firstPasswordDialog: $('#firstPasswordDialog'),
+    firstPasswordInput: $('#firstPasswordInput'),
+    firstPasswordRepeat: $('#firstPasswordRepeat'),
+    firstPasswordError: $('#firstPasswordError'),
+    saveFirstPasswordButton: $('#saveFirstPasswordButton'),
+
+    recoveryDialog: $('#recoveryDialog'),
+    closeRecoveryDialogButton: $('#closeRecoveryDialogButton'),
+    recoveryIdentifierInput: $('#recoveryIdentifierInput'),
+    recoveryCodeInput: $('#recoveryCodeInput'),
+    recoveryPasswordInput: $('#recoveryPasswordInput'),
+    recoveryPasswordRepeat: $('#recoveryPasswordRepeat'),
+    recoveryError: $('#recoveryError'),
+    recoverPasswordButton: $('#recoverPasswordButton'),
+
+    recoveryCodeDialog: $('#recoveryCodeDialog'),
+    recoveryCodeValue: $('#recoveryCodeValue'),
+    copyRecoveryCodeButton: $('#copyRecoveryCodeButton'),
+    confirmRecoveryCodeButton: $('#confirmRecoveryCodeButton'),
 
     infoDialog: $('#infoDialog'),
     closeInfoDialogButton: $('#closeInfoDialogButton'),
@@ -265,12 +290,33 @@
 
   function authErrorText(error) {
     const m = String(error?.message || error || '');
-    if (/invalid login credentials/i.test(m)) return 'Неверный email или пароль.';
+    if (/invalid login credentials/i.test(m)) return 'Неверный email / VK ID или пароль.';
     if (/email not confirmed/i.test(m)) return 'Email ещё не подтверждён.';
     if (/rate limit/i.test(m)) return 'Слишком много попыток. Попробуйте немного позже.';
     return m || 'Не удалось выполнить вход.';
   }
 
+  const MANAGED_VK_EMAIL_DOMAIN = 'example.com';
+
+  function normalizeVkId(value) {
+    const raw = String(value ?? '').trim();
+    const number = Number(raw);
+    return /^\d{1,15}$/.test(raw) && Number.isSafeInteger(number) && number > 0 ? raw : '';
+  }
+
+  function managedVkEmail(vkId) {
+    return `navigator-vk-${vkId}@${MANAGED_VK_EMAIL_DOMAIN}`;
+  }
+
+  function resolveLoginIdentifier(value) {
+    const raw = String(value ?? '').trim();
+    const vkId = normalizeVkId(raw);
+    if (vkId) return { kind:'vk', identifier:vkId, email:managedVkEmail(vkId) };
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+      return { kind:'email', identifier:raw.toLowerCase(), email:raw.toLowerCase() };
+    }
+    return null;
+  }
 
   function managedAccessFunctionUrl() {
     const root = String(CONFIG.supabaseUrl || '').replace(/\/+$/, '');
@@ -278,36 +324,77 @@
   }
 
   async function currentAccessToken() {
-    const { data } = await supabaseClient.auth.getSession();
+    if (!supabaseClient) return '';
+    const { data, error } = await supabaseClient.auth.getSession();
+    if (error) throw error;
     return data?.session?.access_token || '';
   }
 
-  async function callManagedAccess(body) {
-    const token = await currentAccessToken();
-    if (!token) throw new Error('Нет активной ADMIN-сессии.');
+  async function callManagedAccess(body, options = {}) {
+    let token = String(options.token || '');
+    if (!token && options.requireAuth) token = await currentAccessToken();
+    if (options.requireAuth && !token) throw new Error('authentication_required');
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'apikey': configuredKey(),
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
     const response = await fetch(managedAccessFunctionUrl(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'apikey': configuredKey(),
-      },
-      body: JSON.stringify(body),
+      method:'POST',
+      headers,
+      body:JSON.stringify(body),
     });
+
     let payload = null;
     try { payload = await response.json(); } catch { payload = null; }
+
     if (!response.ok || payload?.ok === false) {
-      const code = payload?.code || `HTTP ${response.status}`;
-      const known = {
-        admin_only: 'Нужны права ADMIN.',
-        invalid_email: 'Проверьте email.',
-        invalid_vk_id: 'Проверьте VK ID: нужны только цифры.',
-        display_name_required: 'Введите имя пользователя.',
-        invalid_expiry: 'Некорректный срок доступа.',
-      };
-      throw new Error(known[code] || code);
+      const error = new Error(payload?.code || `HTTP ${response.status}`);
+      error.code = payload?.code || '';
+      error.status = response.status;
+      error.retryAfterSeconds = Number(payload?.retry_after_seconds || 0);
+      throw error;
     }
     return payload;
+  }
+
+  function managedAccessErrorText(error) {
+    const code = String(error?.code || error?.message || '');
+    const known = {
+      admin_only:'Нужны права ADMIN.',
+      invalid_email:'Проверьте email.',
+      invalid_vk_id:'Проверьте VK ID: нужны только цифры.',
+      display_name_required:'Введите имя пользователя.',
+      invalid_expiry:'Некорректный срок доступа.',
+      authentication_required:'Сессия входа не найдена. Войдите заново.',
+      managed_user_required:'Для этого аккаунта не настроен управляемый вход EGE.',
+      password_already_set:'Постоянный пароль уже установлен.',
+      password_too_short:'Пароль должен содержать не менее 10 символов.',
+      password_too_long:'Пароль слишком длинный.',
+      invalid_recovery:'Email / VK ID или код восстановления не совпадают.',
+      recovery_not_issued:'Для этого EGE-доступа отдельный код восстановления ещё не выдавался.',
+      access_ended:'access_ended',
+      origin_not_allowed:'Эта площадка пока не разрешена для защищённого входа.',
+    };
+    if (code === 'recovery_locked') {
+      const mins = Math.max(1, Math.ceil(Number(error?.retryAfterSeconds || 900) / 60));
+      return `Слишком много попыток. Повторите примерно через ${mins} мин.`;
+    }
+    return known[code] || 'Не удалось выполнить действие. Попробуйте ещё раз чуть позже.';
+  }
+
+  function clearInlineError(node) {
+    if (!node) return;
+    node.textContent = '';
+    node.classList.add('hidden');
+  }
+
+  function showInlineError(node, text) {
+    if (!node) return;
+    node.textContent = text;
+    node.classList.remove('hidden');
   }
 
   function resolveCreateExpiry(select) {
@@ -1778,16 +1865,19 @@
   }
 
   function managedCredentialsMessage(result) {
+    const hello = `Здравствуйте${result.display_name ? `, ${result.display_name}` : ''}!`;
     if (result.kind === 'email') {
       if (result.existing_auth) {
-        return `Здравствуйте${result.display_name ? `, ${result.display_name}` : ''}!\n\nВам открыт доступ к EGE Navigator.\nEmail: ${result.email}\n\nВаш аккаунт уже существовал, поэтому пароль НЕ менялся. Используйте свой текущий пароль.`;
+        return `${hello}\n\nВам открыт доступ к EGE Navigator.\nEmail: ${result.email}\n\nВаш аккаунт уже существовал, поэтому пароль НЕ менялся. Используйте свой текущий пароль.\n\nОткрыть Navigator: ${window.location.origin}${window.location.pathname}`;
       }
-      return `Здравствуйте${result.display_name ? `, ${result.display_name}` : ''}!\n\nДля вас создан доступ к EGE Navigator.\nEmail: ${result.email}\nВременный пароль: ${result.temporary_password}\n\nСохраните данные. После следующего обновления входа Navigator попросит заменить временный пароль на свой.`;
+      return `${hello}\n\nДля вас создан доступ к EGE Navigator.\nEmail: ${result.email}\nВременный пароль: ${result.temporary_password}\n\nОткройте Navigator: ${window.location.origin}${window.location.pathname}\n\nПри первом входе Navigator попросит придумать свой постоянный пароль и покажет код восстановления. Сохраните этот код.`;
     }
+
     if (result.existing_auth) {
-      return `Здравствуйте${result.display_name ? `, ${result.display_name}` : ''}!\n\nВам добавлен доступ к EGE Navigator.\nVK ID: ${result.vk_user_id}\n\nИспользуется ваш уже существующий Supabase Auth (например, от OGE), поэтому пароль НЕ менялся. Вход по VK ID подключим следующим шагом.`;
+      return `${hello}\n\nВам добавлен доступ к EGE Navigator.\nVK ID: ${result.vk_user_id}\n\nИспользуется ваш уже существующий аккаунт (например, от OGE), поэтому пароль НЕ менялся. Введите VK ID и свой текущий пароль.\n\nОткрыть Navigator: ${window.location.origin}${window.location.pathname}`;
     }
-    return `Здравствуйте${result.display_name ? `, ${result.display_name}` : ''}!\n\nДля вас подготовлен доступ к EGE Navigator.\nVK ID: ${result.vk_user_id}\nВременный пароль: ${result.temporary_password}\n\nВход по VK ID будет подключён следующим шагом. Пока не отправляйте эти данные пользователю.`;
+
+    return `${hello}\n\nДля вас создан доступ к EGE Navigator.\nVK ID: ${result.vk_user_id}\nВременный пароль: ${result.temporary_password}\n\nОткройте Navigator: ${window.location.origin}${window.location.pathname}\n\nПри первом входе Navigator попросит придумать свой постоянный пароль и покажет код восстановления. Сохраните этот код.`;
   }
 
   function showAdminCredentials(result) {
@@ -1807,7 +1897,7 @@
         display_name:el.emailAccessNameInput.value.trim(),
         access_level:el.emailAccessLevelSelect.value,
         access_expires_at:resolveCreateExpiry(el.emailAccessExpirySelect),
-      });
+      }, { requireAuth:true });
       el.emailAccessAdminDialog.close();
       showAdminCredentials(result);
       await refreshAdminParticipants();
@@ -1831,7 +1921,7 @@
         source:el.vkAccessSourceSelect.value,
         access_level:el.vkAccessLevelSelect.value,
         access_expires_at:resolveCreateExpiry(el.vkAccessExpirySelect),
-      });
+      }, { requireAuth:true });
       el.vkAccessAdminDialog.close();
       showAdminCredentials(result);
       await refreshAdminParticipants();
@@ -3455,6 +3545,7 @@
     stopAdminAutoRefresh();
 
     currentAccess = null;
+    currentManagedAuth = null;
     userSourcePreference = null;
     demoMode = false;
     demoUsesAuth = false;
@@ -3504,14 +3595,26 @@
     currentUser = user;
     clearMessage();
 
-    const { data, error } = await supabaseClient.rpc('ege_my_access');
-    if (error) {
+    const [accessResult, managedResult] = await Promise.all([
+      supabaseClient.rpc('ege_my_access'),
+      supabaseClient.rpc('ege_my_managed_auth_v060')
+    ]);
+    if (accessResult.error) {
       leaveApp();
       showMessage('Не удалось проверить доступ к EGE Navigator.', 'error');
       return;
     }
+    if (managedResult.error) {
+      console.error('Managed auth metadata failed:', managedResult.error);
+      leaveApp();
+      showMessage('Не удалось проверить параметры защищённого входа EGE.', 'error');
+      return;
+    }
 
-    const access = data?.[0];
+    const access = accessResult.data?.[0];
+    currentManagedAuth = Array.isArray(managedResult.data)
+      ? (managedResult.data[0] || null)
+      : (managedResult.data || null);
     if (!access) {
       await supabaseClient.auth.signOut();
       showMessage('Для этого аккаунта доступ к EGE Navigator ещё не выдан.', 'error');
@@ -3531,6 +3634,12 @@
     if (access.status !== 'active' || expired(access.access_expires_at)) {
       leaveApp();
       showMessage('Активного доступа к EGE Navigator нет или срок доступа завершён.', 'error');
+      return;
+    }
+
+    if (currentManagedAuth?.must_change_password) {
+      currentAccess = access;
+      showForcedPasswordDialog();
       return;
     }
     if (access.access_level === 'demo') {
@@ -3571,21 +3680,179 @@
     }
   }
 
+  function openAuthDialog() {
+    clearAuthError();
+    if (el.authHint) el.authHint.textContent = 'Введите email или VK ID, который вы получили для доступа.';
+    if (typeof el.authDialog?.showModal === 'function' && !el.authDialog.open) el.authDialog.showModal();
+    window.setTimeout(() => el.loginIdentifierInput?.focus(), 40);
+  }
+
+  function showForcedPasswordDialog() {
+    document.body.classList.remove('workspace-mode');
+    el.accessGate.classList.add('hidden');
+    el.appShell.classList.add('hidden');
+    el.signOutButton.classList.add('hidden');
+    el.adminButton.classList.add('hidden');
+    el.sourceBadge.classList.add('hidden');
+    clearInlineError(el.firstPasswordError);
+    el.firstPasswordInput.value = '';
+    el.firstPasswordRepeat.value = '';
+    if (typeof el.firstPasswordDialog?.showModal === 'function' && !el.firstPasswordDialog.open) {
+      el.firstPasswordDialog.showModal();
+    }
+    window.setTimeout(() => el.firstPasswordInput?.focus(), 40);
+  }
+
   async function signIn() {
     clearAuthError();
-    const email = el.emailInput.value.trim();
+    const login = resolveLoginIdentifier(el.loginIdentifierInput?.value || '');
     const password = el.passwordInput.value;
-    if (!email || !password) return showAuthError('Введите email и пароль.');
+    if (!login || !password) return showAuthError('Введите email или числовой VK ID и пароль.');
 
     el.signInButton.disabled = true;
     try {
-      const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabaseClient.auth.signInWithPassword({
+        email:login.email,
+        password,
+      });
       if (error) return showAuthError(authErrorText(error));
-      el.authDialog.close();
+
+      if (el.authDialog?.open) el.authDialog.close();
+
+      // Explicit activation avoids the old race where a valid login looked like a failure
+      // until the page was refreshed.
       if (data?.user) await activateUser(data.user);
     } finally {
       el.signInButton.disabled = false;
     }
+  }
+
+  function openRecoveryDialog() {
+    clearInlineError(el.recoveryError);
+    el.recoveryIdentifierInput.value = el.loginIdentifierInput?.value?.trim() || '';
+    el.recoveryCodeInput.value = '';
+    el.recoveryPasswordInput.value = '';
+    el.recoveryPasswordRepeat.value = '';
+    if (el.authDialog?.open) el.authDialog.close();
+    if (typeof el.recoveryDialog?.showModal === 'function' && !el.recoveryDialog.open) {
+      el.recoveryDialog.showModal();
+    }
+    window.setTimeout(() => (el.recoveryIdentifierInput.value ? el.recoveryCodeInput : el.recoveryIdentifierInput)?.focus(), 40);
+  }
+
+  function showRecoveryCode(code, continuation, recoveredLogin = null) {
+    pendingRecoveryContinuation = continuation;
+    pendingRecoveredLogin = recoveredLogin;
+    el.recoveryCodeValue.textContent = code;
+    if (el.firstPasswordDialog?.open) el.firstPasswordDialog.close();
+    if (el.recoveryDialog?.open) el.recoveryDialog.close();
+    if (typeof el.recoveryCodeDialog?.showModal === 'function' && !el.recoveryCodeDialog.open) {
+      el.recoveryCodeDialog.showModal();
+    }
+  }
+
+  async function saveFirstPassword() {
+    clearInlineError(el.firstPasswordError);
+    const password = el.firstPasswordInput.value;
+    const repeat = el.firstPasswordRepeat.value;
+    if (password.length < 10) return showInlineError(el.firstPasswordError, 'Пароль должен содержать не менее 10 символов.');
+    if (password !== repeat) return showInlineError(el.firstPasswordError, 'Пароли не совпадают.');
+
+    el.saveFirstPasswordButton.disabled = true;
+    try {
+      const result = await callManagedAccess({
+        action:'set_first_password',
+        new_password:password,
+      }, { requireAuth:true });
+
+      if (currentManagedAuth) currentManagedAuth.must_change_password = false;
+      showRecoveryCode(result.recovery_code, 'activate');
+    } catch (error) {
+      const text = managedAccessErrorText(error);
+      if (text === 'access_ended') {
+        if (el.firstPasswordDialog?.open) el.firstPasswordDialog.close();
+        leaveApp();
+        showMessage('Активного доступа к EGE Navigator нет или срок доступа завершён.', 'error');
+      } else {
+        showInlineError(el.firstPasswordError, text);
+      }
+    } finally {
+      el.saveFirstPasswordButton.disabled = false;
+    }
+  }
+
+  async function recoverPassword() {
+    clearInlineError(el.recoveryError);
+    const login = resolveLoginIdentifier(el.recoveryIdentifierInput.value);
+    const recoveryCode = el.recoveryCodeInput.value.trim();
+    const password = el.recoveryPasswordInput.value;
+    const repeat = el.recoveryPasswordRepeat.value;
+
+    if (!login) return showInlineError(el.recoveryError, 'Введите корректный email или числовой VK ID.');
+    if (!recoveryCode) return showInlineError(el.recoveryError, 'Введите код восстановления.');
+    if (password.length < 10) return showInlineError(el.recoveryError, 'Пароль должен содержать не менее 10 символов.');
+    if (password !== repeat) return showInlineError(el.recoveryError, 'Пароли не совпадают.');
+
+    el.recoverPasswordButton.disabled = true;
+    try {
+      const result = await callManagedAccess({
+        action:'recover_password',
+        identifier:login.identifier,
+        recovery_code:recoveryCode,
+        new_password:password,
+      });
+
+      showRecoveryCode(result.recovery_code, 'login', {
+        identifier:login.identifier,
+        email:login.email,
+        password,
+      });
+    } catch (error) {
+      const text = managedAccessErrorText(error);
+      if (text === 'access_ended') {
+        if (el.recoveryDialog?.open) el.recoveryDialog.close();
+        showMessage('Активного доступа к EGE Navigator нет или срок доступа завершён.', 'error');
+      } else {
+        showInlineError(el.recoveryError, text);
+      }
+    } finally {
+      el.recoverPasswordButton.disabled = false;
+    }
+  }
+
+  async function confirmRecoveryCodeAndContinue() {
+    if (el.recoveryCodeDialog?.open) el.recoveryCodeDialog.close();
+    const continuation = pendingRecoveryContinuation;
+    const recovered = pendingRecoveredLogin;
+    pendingRecoveryContinuation = null;
+    pendingRecoveredLogin = null;
+
+    if (continuation === 'activate' && currentUser) {
+      await activateUser(currentUser);
+      return;
+    }
+
+    if (continuation === 'login' && recovered) {
+      const { data, error } = await supabaseClient.auth.signInWithPassword({
+        email:recovered.email,
+        password:recovered.password,
+      });
+      if (error) {
+        leaveApp();
+        openAuthDialog();
+        el.loginIdentifierInput.value = recovered.identifier;
+        showAuthError('Пароль изменён, но автоматический вход не удался. Введите новый пароль ещё раз.');
+      } else if (data?.user) {
+        await activateUser(data.user);
+      }
+    }
+  }
+
+  async function copyRecoveryCode() {
+    const code = el.recoveryCodeValue?.textContent || '';
+    if (!code) return;
+    const ok = await copyText(code);
+    showToast(ok ? '✓ Код восстановления скопирован' : 'Не удалось скопировать код');
   }
 
   function resetFilters() {
@@ -3670,21 +3937,26 @@
     });
   }
 
-  el.openLoginButton.addEventListener('click', () => {
-    clearAuthError();
-    if (typeof el.authDialog.showModal === 'function') el.authDialog.showModal();
-  });
+  el.openLoginButton.addEventListener('click', openAuthDialog);
   el.closeAuthDialogButton.addEventListener('click', () => el.authDialog.close());
   el.signInButton.addEventListener('click', signIn);
   el.passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') signIn(); });
+  el.loginIdentifierInput?.addEventListener('keydown', e => { if (e.key === 'Enter') el.passwordInput?.focus(); });
+  el.forgotPasswordButton?.addEventListener('click', openRecoveryDialog);
 
-  el.openDonutButton.addEventListener('click', () => {
-    showInfo(
-      'VK Donut предусмотрен',
-      'Кнопка остаётся на стартовом экране. Серверную проверку VK Donut подключим отдельным этапом, не затрагивая ОГЭ.',
-      'VK DONUT'
-    );
-  });
+  el.saveFirstPasswordButton?.addEventListener('click', saveFirstPassword);
+  el.firstPasswordRepeat?.addEventListener('keydown', e => { if (e.key === 'Enter') saveFirstPassword(); });
+
+  el.closeRecoveryDialogButton?.addEventListener('click', () => el.recoveryDialog.close());
+  el.recoverPasswordButton?.addEventListener('click', recoverPassword);
+  el.recoveryPasswordRepeat?.addEventListener('keydown', e => { if (e.key === 'Enter') recoverPassword(); });
+
+  el.copyRecoveryCodeButton?.addEventListener('click', copyRecoveryCode);
+  el.confirmRecoveryCodeButton?.addEventListener('click', confirmRecoveryCodeAndContinue);
+
+  // Direct VK OAuth/Donut login is intentionally hidden. Donors use the same
+  // "Войти" form and enter their numeric VK ID + password.
+  el.openDonutButton?.addEventListener('click', openAuthDialog);
 
   el.openDemoButton.addEventListener('click', () => startDemo('public'));
 
