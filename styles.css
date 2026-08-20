@@ -1942,3 +1942,94 @@ select option { background: #062b20; color: #effbf7; }
   font: italic 16px/1.75 Georgia, 'Times New Roman', serif;
   white-space: pre-wrap;
 }
+
+
+/* v0.4.2 — Speaking 2–4: clean FIPI-like layout, no raw ShowPictureQ tables. */
+.backup-speaking-instruction {
+  padding: 16px 18px;
+}
+.backup-speaking-lead {
+  margin: 0 0 8px;
+  color: #dcebe5;
+  font-size: 13px;
+  font-weight: 760;
+}
+.backup-speaking-intro {
+  color: #f4ead0;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.62;
+}
+.backup-speaking-numbered-list,
+.backup-speaking-bullet-list {
+  margin: 12px 0 12px 24px;
+  padding-left: 18px;
+  color: #edf6f2;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.backup-speaking-numbered-list li,
+.backup-speaking-bullet-list li {
+  margin: 5px 0;
+  padding-left: 3px;
+}
+.backup-speaking-closing {
+  margin-top: 12px;
+  color: #f4ead0;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.55;
+}
+.backup-speaking-media-section {
+  padding: 0;
+}
+.backup-speaking-media-section > .backup-block-label {
+  margin-left: 2px;
+}
+.backup-speaking-ad-title {
+  margin: 0 0 9px 2px;
+  color: #f2dc9e;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 17px;
+  font-weight: 800;
+}
+.backup-speaking-media-grid.speaking-count-1 {
+  grid-template-columns: minmax(0, 760px);
+}
+.backup-speaking-media-grid.speaking-count-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.backup-speaking-media-grid.speaking-count-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.backup-speaking-photo-card {
+  padding: 10px;
+}
+.backup-speaking-photo-card .backup-media-kind {
+  color: #e7d18f;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: none;
+}
+.backup-speaking-photo-card img {
+  width: 100%;
+  max-height: 500px;
+  object-fit: contain;
+  background: #fff;
+}
+.backup-speaking-media-grid.speaking-count-3 .backup-speaking-photo-card img {
+  max-height: 360px;
+}
+
+@media (max-width: 950px) {
+  .backup-speaking-media-grid.speaking-count-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .backup-speaking-media-grid.speaking-count-2,
+  .backup-speaking-media-grid.speaking-count-3 {
+    grid-template-columns: 1fr;
+  }
+}

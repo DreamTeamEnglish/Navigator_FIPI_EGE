@@ -1890,6 +1890,294 @@
     };
   }
 
+
+  // v0.4.2 — Speaking 2–4: FIPI-like clean layout.
+  // Do not render raw item_tables for these tasks: they contain duplicated task text
+  // and technical ShowPictureQ(...) paths. Use item_text + trusted media links instead.
+  function speakingBucket(unit) {
+    return ['speaking_2', 'speaking_3', 'speaking_4'].includes(unit?.exam_bucket);
+  }
+
+  function speakingSourceText(model) {
+    const row = model?.items?.[0];
+    return backupTextClean(row?.body || row?.item?.item_text || model?.context?.[0] || '')
+      .replace(/^Дайте\s+развернутый\s+ответ\.\s*/iu, '')
+      .trim();
+  }
+
+  function speakingCleanTail(value) {
+    return backupTextClean(value)
+      .replace(/\s+Photo\s*1\.?(?:\s+Photo\s*2\.?)?(?:\s+Photo\s*3\.?)?\s*$/iu, '')
+      .trim();
+  }
+
+  function splitSpeakingPoints(value, expected = 0) {
+    const text = backupTextClean(value);
+    if (!text) return [];
+    const out = [];
+    const re = /(?:^|\s)([1-9])\)\s*([\s\S]*?)(?=(?:\s+[1-9]\)\s)|$)/gu;
+    for (const match of text.matchAll(re)) {
+      const n = Number(match[1]);
+      if (expected && n > expected) continue;
+      const point = backupTextClean(match[2]).replace(/[;,.]\s*$/u, '').trim();
+      if (point) out.push({ n, text: point });
+    }
+    return out;
+  }
+
+  function speakingTask2Model(model) {
+    const source = speakingCleanTail(speakingSourceText(model));
+    if (!source) return null;
+
+    const closingMatch = source.match(/You\s+have\s+20\s+seconds\s+to\s+ask\s+each\s+question\./iu);
+    const closing = closingMatch?.[0] || '';
+    let core = closingMatch ? source.slice(0, closingMatch.index) : source;
+
+    const listStart = core.search(/(?:^|\s)1\)\s*/u);
+    const beforeList = listStart >= 0 ? backupTextClean(core.slice(0, listStart)) : core;
+    const listText = listStart >= 0 ? core.slice(listStart) : '';
+    const points = splitSpeakingPoints(listText, 4);
+
+    let adTitle = '';
+    let intro = beforeList;
+    const following = beforeList.match(/^([\s\S]*?following:)\s*([\s\S]+)$/iu);
+    if (following) {
+      intro = backupTextClean(following[1]);
+      adTitle = backupTextClean(following[2]);
+    }
+
+    return { intro, adTitle, points, closing };
+  }
+
+  function speakingTask3Model(model) {
+    const source = speakingCleanTail(speakingSourceText(model));
+    if (!source) return null;
+
+    const marker = /In\s+your\s+talk\s+remember\s+to\s+speak\s+about:\s*/iu;
+    const markerMatch = marker.exec(source);
+    if (!markerMatch) return { intro: source, points: [], closing: '' };
+
+    const intro = backupTextClean(source.slice(0, markerMatch.index));
+    const after = source.slice(markerMatch.index + markerMatch[0].length);
+    const closingIndex = after.search(/You\s+have\s+to\s+talk\s+continuously/iu);
+    const bulletText = closingIndex >= 0 ? after.slice(0, closingIndex) : after;
+    const closing = speakingCleanTail(closingIndex >= 0 ? after.slice(closingIndex) : '');
+
+    const points = bulletText
+      .split(/[·•]\s*/u)
+      .map(x => backupTextClean(x).replace(/[;,.]\s*$/u, '').trim())
+      .filter(Boolean);
+
+    return { intro, points, closing };
+  }
+
+  function speakingTask4Model(model) {
+    const source = speakingCleanTail(speakingSourceText(model));
+    if (!source) return null;
+
+    const colonIndex = source.search(/photographs:\s*/iu);
+    let intro = source;
+    let points = [];
+    let closing = '';
+
+    if (colonIndex >= 0) {
+      const m = /photographs:\s*/iu.exec(source.slice(colonIndex));
+      const afterStart = colonIndex + (m?.[0]?.length || 0);
+      intro = backupTextClean(source.slice(0, afterStart));
+      const after = source.slice(afterStart);
+      const closingIndex = after.search(/You\s+will\s+speak\s+for\s+not\s+more\s+than\s+2\s+minutes/iu);
+      const bulletText = closingIndex >= 0 ? after.slice(0, closingIndex) : after;
+      closing = speakingCleanTail(closingIndex >= 0 ? after.slice(closingIndex) : '');
+
+      points = bulletText
+        .split(/[·•]\s*/u)
+        .map(x => backupTextClean(x).replace(/[;,.]\s*$/u, '').trim())
+        .filter(Boolean);
+    }
+
+    return { intro, points, closing };
+  }
+
+  function renderSpeakingInstruction(unit, model) {
+    let parsed = null;
+    if (unit?.exam_bucket === 'speaking_2') parsed = speakingTask2Model(model);
+    if (unit?.exam_bucket === 'speaking_3') parsed = speakingTask3Model(model);
+    if (unit?.exam_bucket === 'speaking_4') parsed = speakingTask4Model(model);
+    if (!parsed) return '';
+
+    if (unit?.exam_bucket === 'speaking_2') {
+      return `
+        <section class="backup-learning-section backup-instruction-section backup-speaking-instruction">
+          <span class="backup-block-label">ИНСТРУКЦИЯ</span>
+          <div class="backup-speaking-lead">Дайте развернутый ответ.</div>
+          ${parsed.intro ? `<div class="backup-speaking-intro">${esc(parsed.intro)}</div>` : ''}
+          ${parsed.points?.length ? `
+            <ol class="backup-speaking-numbered-list">
+              ${parsed.points.map(point => `<li value="${point.n}">${esc(point.text)}</li>`).join('')}
+            </ol>` : ''}
+          ${parsed.closing ? `<div class="backup-speaking-closing">${esc(parsed.closing)}</div>` : ''}
+        </section>`;
+    }
+
+    return `
+      <section class="backup-learning-section backup-instruction-section backup-speaking-instruction">
+        <span class="backup-block-label">ИНСТРУКЦИЯ</span>
+        <div class="backup-speaking-lead">Дайте развернутый ответ.</div>
+        ${parsed.intro ? `<div class="backup-speaking-intro">${esc(parsed.intro)}</div>` : ''}
+        ${parsed.points?.length ? `
+          <ul class="backup-speaking-bullet-list">
+            ${parsed.points.map(point => `<li>${esc(point)}</li>`).join('')}
+          </ul>` : ''}
+        ${parsed.closing ? `<div class="backup-speaking-closing">${esc(parsed.closing)}</div>` : ''}
+      </section>`;
+  }
+
+  function collectSpeakingTableStrings(value, out = []) {
+    if (value === null || value === undefined) return out;
+    if (typeof value === 'string') {
+      if (value.trim()) out.push(value);
+      return out;
+    }
+    if (Array.isArray(value)) {
+      for (const part of value) collectSpeakingTableStrings(part, out);
+      return out;
+    }
+    if (typeof value === 'object') {
+      for (const part of Object.values(value)) collectSpeakingTableStrings(part, out);
+    }
+    return out;
+  }
+
+  function speakingMediaBasename(value) {
+    const raw = String(value ?? '').split(/[?#]/)[0];
+    const part = raw.split('/').pop() || raw;
+    try { return decodeURIComponent(part).toLocaleLowerCase('en-US'); }
+    catch { return part.toLocaleLowerCase('en-US'); }
+  }
+
+  function speakingPictureRefs(item) {
+    const strings = collectSpeakingTableStrings(item?.item_tables || []);
+    const labeled = [];
+    const all = [];
+
+    for (const raw of strings) {
+      const text = String(raw);
+
+      for (const match of text.matchAll(/Photo\s*([1-9])\.?\s*ShowPictureQ\w*\(\s*['"]([^'"]+\.(?:jpe?g|png|gif|webp))['"]/giu)) {
+        labeled.push({ label: `Photo ${Number(match[1])}`, path: match[2] });
+      }
+
+      for (const match of text.matchAll(/ShowPictureQ\w*\(\s*['"]([^'"]+\.(?:jpe?g|png|gif|webp))['"]/giu)) {
+        all.push(match[1]);
+      }
+    }
+
+    const dedupeLabeled = [];
+    const seenLabeled = new Set();
+    for (const row of labeled) {
+      const key = `${row.label}|${speakingMediaBasename(row.path)}`;
+      if (!seenLabeled.has(key)) {
+        seenLabeled.add(key);
+        dedupeLabeled.push(row);
+      }
+    }
+
+    return {
+      labeled: dedupeLabeled.sort((a,b) => Number(a.label.replace(/\D/g,'')) - Number(b.label.replace(/\D/g,''))),
+      all: [...new Set(all)]
+    };
+  }
+
+  function speakingMediaRows(unit, model) {
+    const expected = unit?.exam_bucket === 'speaking_2' ? 1 : unit?.exam_bucket === 'speaking_3' ? 3 : 2;
+    const item = model?.items?.[0]?.item;
+    const rows = backupMediaForUnit(unit.id).filter(({ media }) => media?.kind === 'image');
+    const refs = speakingPictureRefs(item);
+    const picked = [];
+    const seen = new Set();
+
+    const addByRef = (ref, label = '') => {
+      const base = speakingMediaBasename(ref);
+      const row = rows.find(({ media }) => speakingMediaBasename(media?.official_url) === base);
+      if (!row || seen.has(row.media.media_id)) return;
+      seen.add(row.media.media_id);
+      picked.push({ ...row, label });
+    };
+
+    // Speaking 3/4 tables explicitly label Photo 1 / Photo 2 / Photo 3.
+    // This also safely excludes the decorative blue “4” PNG in Speaking 4.
+    for (const ref of refs.labeled) addByRef(ref.path, ref.label);
+
+    // Speaking 2 normally has one advertisement image without a Photo label.
+    if (picked.length < expected) {
+      for (const ref of refs.all) {
+        addByRef(ref, '');
+        if (picked.length >= expected) break;
+      }
+    }
+
+    // Defensive fallback for legacy rows where ShowPictureQ paths were not retained.
+    if (picked.length < expected) {
+      let fallback = rows.filter(({ media }) => !seen.has(media.media_id));
+      if (unit?.exam_bucket === 'speaking_4' && fallback.length > expected - picked.length) {
+        const nonTechnical = fallback.filter(({ media }) => {
+          const url = String(media?.official_url || '');
+          return !/_5_\d+\.png(?:[?#]|$)/iu.test(url);
+        });
+        if (nonTechnical.length >= expected - picked.length) fallback = nonTechnical;
+      }
+      for (const row of fallback) {
+        if (seen.has(row.media.media_id)) continue;
+        seen.add(row.media.media_id);
+        picked.push({ ...row, label: '' });
+        if (picked.length >= expected) break;
+      }
+    }
+
+    return picked.slice(0, expected).map((row, index) => ({
+      ...row,
+      label: row.label || (unit?.exam_bucket === 'speaking_2' ? 'Объявление' : `Photo ${index + 1}`)
+    }));
+  }
+
+  function renderSpeakingMedia(unit, model) {
+    const rows = speakingMediaRows(unit, model);
+    if (!rows.length) return '';
+
+    const task2 = unit?.exam_bucket === 'speaking_2';
+    const adTitle = task2 ? (speakingTask2Model(model)?.adTitle || '') : '';
+    const countClass = `speaking-count-${rows.length}`;
+
+    return `
+      <section class="backup-learning-section backup-media-section backup-speaking-media-section">
+        <span class="backup-block-label">${task2 ? 'ОБЪЯВЛЕНИЕ' : 'ФОТОГРАФИИ'}</span>
+        ${adTitle ? `<div class="backup-speaking-ad-title">${esc(adTitle)}</div>` : ''}
+        <div class="backup-media-grid backup-speaking-media-grid ${countClass}">
+          ${rows.map(({ media, label }) => {
+            const ready = Boolean(media.backup_ready && media.backup_path);
+            return `
+              <article class="backup-media-card image-card backup-speaking-photo-card" data-backup-media-card="${esc(media.media_id)}">
+                <div class="backup-media-head">
+                  <span class="backup-media-kind">${esc(label)}</span>
+                  <span class="backup-media-status">${ready ? 'Яндекс-резерв' : 'недоступно'}</span>
+                </div>
+                <div class="backup-media-slot" data-backup-media-slot="${esc(media.media_id)}">
+                  ${ready
+                    ? `<div class="backup-loading"><div class="backup-spinner"></div>Загружаю…</div>`
+                    : `<div class="backup-media-error">Резервное изображение недоступно.</div>`}
+                </div>
+              </article>`;
+          }).join('')}
+        </div>
+      </section>`;
+  }
+
+  function renderSpeakingTask(unit, model) {
+    if (!speakingBucket(unit)) return '';
+    return `${renderSpeakingInstruction(unit, model)}${renderSpeakingMedia(unit, model)}`;
+  }
+
+
   function renderInstructionSection(model) {
     if (!model.instruction) return '';
     return `
@@ -2667,6 +2955,19 @@
       .backup-writing37-bullets { margin:2mm 0 3mm 7mm; padding-left:4mm; }
       .backup-writing37-bullets li { margin:0 0 1mm; }
       .backup-writing37-wordline { font-weight:700; }
+      .backup-speaking-lead { margin:0 0 2.5mm; font-weight:700; }
+      .backup-speaking-intro { margin:0 0 3mm; font-weight:650; line-height:1.5; }
+      .backup-speaking-numbered-list, .backup-speaking-bullet-list { margin:2mm 0 3mm 7mm; padding-left:5mm; }
+      .backup-speaking-numbered-list li, .backup-speaking-bullet-list li { margin:0 0 1.5mm; }
+      .backup-speaking-closing { margin-top:3mm; font-weight:700; }
+      .backup-speaking-ad-title { margin:0 0 3mm; font:700 12pt Georgia, 'Times New Roman', serif; color:#111; }
+      .backup-speaking-media-grid { display:grid !important; gap:4mm; }
+      .backup-speaking-media-grid.speaking-count-1 { grid-template-columns:1fr; }
+      .backup-speaking-media-grid.speaking-count-2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .backup-speaking-media-grid.speaking-count-3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .backup-speaking-photo-card { padding:2.5mm; margin:0; break-inside:avoid; }
+      .backup-speaking-photo-card img { max-height:95mm; }
+
       .backup-media-grid { display:block; }
       .backup-media-card img { display:block; max-width:100%; max-height:145mm; margin:0 auto; object-fit:contain; }
       .backup-print-media-note { display:block !important; color:#555; font-size:9pt; padding:1mm 0; }
@@ -2723,7 +3024,10 @@
     const model = unitViewerModel(unit, unitJson);
     el.backupTaskTitle.textContent = viewerUnitTitle(unit, model);
 
-    if (unit?.exam_bucket === 'writing_37') {
+    if (speakingBucket(unit)) {
+      el.backupTaskBody.innerHTML = renderSpeakingTask(unit, model)
+        || `${renderInstructionSection(model)}${renderMediaCards(unit)}`;
+    } else if (unit?.exam_bucket === 'writing_37') {
       el.backupTaskBody.innerHTML = renderWriting37(unit, model)
         || `${renderInstructionSection(model)}${renderMediaCards(unit)}${renderContextSection(unit, model)}`;
     } else if (unit?.exam_bucket === 'writing_38') {
