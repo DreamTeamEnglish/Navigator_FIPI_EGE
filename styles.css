@@ -2188,3 +2188,143 @@ select option { background: #062b20; color: #effbf7; }
     min-width: 0;
   }
 }
+
+
+/* v0.6.1 — recovery UX + dialog geometry fix */
+#authDialog,
+#firstPasswordDialog,
+#recoveryDialog,
+#recoveryCodeDialog,
+#emailResetPasswordDialog {
+  width: min(620px, calc(100vw - 28px));
+  max-width: none;
+  margin: auto;
+  overflow: visible;
+}
+
+#authDialog .dialog-card,
+#firstPasswordDialog .dialog-card,
+#recoveryDialog .dialog-card,
+#recoveryCodeDialog .dialog-card,
+#emailResetPasswordDialog .dialog-card {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.auth-success {
+  margin-top: 10px;
+  padding: 10px 11px;
+  border-radius: 10px;
+  color: #bff1de;
+  background: rgba(31,140,100,.12);
+  border: 1px solid rgba(60,184,136,.28);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.email-recovery-option {
+  margin-top: 13px;
+  padding: 12px 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(217,175,74,.22);
+  background: rgba(217,175,74,.055);
+}
+.email-recovery-option > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.email-recovery-option strong {
+  color: #f5e4ae;
+  font-size: 12px;
+}
+.email-recovery-option span {
+  color: #8fb0a4;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.email-recovery-option .button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding-inline: 12px;
+  font-size: 10px;
+}
+
+.recovery-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 2px;
+  color: #74988a;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.recovery-divider::before,
+.recovery-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: rgba(159,200,185,.14);
+}
+
+.recovery-admin-fallback {
+  margin-top: 14px;
+  padding: 11px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 11px;
+  background: rgba(255,255,255,.025);
+  border: 1px solid rgba(159,200,185,.13);
+  color: #91afa4;
+  font-size: 10px;
+}
+.recovery-admin-fallback a {
+  color: #e3c96f;
+  text-decoration: none;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.recovery-admin-fallback a:hover { color: #ffea9b; }
+
+.button.copy-success,
+.admin-mini-button.copy-success {
+  border-color: rgba(63,196,143,.55) !important;
+  background: rgba(39,153,111,.17) !important;
+  color: #c9f6e5 !important;
+  transform: translateY(-1px);
+}
+
+.admin-mini-button.reset-password {
+  border-color: rgba(217,175,74,.28);
+  color: #efd891;
+}
+
+@media (max-height: 720px), (max-width: 640px) {
+  #authDialog,
+  #firstPasswordDialog,
+  #recoveryDialog,
+  #recoveryCodeDialog,
+  #emailResetPasswordDialog {
+    width: min(620px, calc(100vw - 18px));
+    max-height: calc(100vh - 18px);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .email-recovery-option,
+  .recovery-admin-fallback {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .email-recovery-option .button { width: 100%; }
+  .recovery-admin-fallback a { white-space: normal; }
+}

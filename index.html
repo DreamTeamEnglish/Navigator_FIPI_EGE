@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <title>EGE Navigator · FIPI · DreamTeam English</title>
-  <link rel="stylesheet" href="styles.css?v=060-unified-login-1">
+  <link rel="stylesheet" href="styles.css?v=061-recovery-ux-1">
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -174,19 +174,54 @@
     </div>
   </dialog>
 
-  <dialog id="recoveryDialog" class="dialog-shell">
+  <dialog id="recoveryDialog" class="dialog-shell auth-wide-dialog">
     <div class="dialog-card managed-auth-card">
       <button id="closeRecoveryDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
       <span class="gold-kicker">ВОССТАНОВЛЕНИЕ ДОСТУПА · EGE</span>
       <h3>Забыли пароль?</h3>
-      <p>Введите email или VK ID, сохранённый код восстановления и сразу придумайте новый пароль.</p>
+      <p>Введите email или VK ID. Если код восстановления сохранён — можно сразу придумать новый пароль.</p>
+
       <label><span>Email или VK ID</span><input id="recoveryIdentifierInput" type="text" autocomplete="username" placeholder="teacher@example.com или 123456789"></label>
+
+      <section id="emailRecoveryOption" class="email-recovery-option hidden">
+        <div>
+          <strong>Восстановить через email</strong>
+          <span>Для приглашённого пользователя с настоящим email можно получить письмо Supabase со ссылкой на смену пароля.</span>
+        </div>
+        <button id="sendEmailRecoveryButton" class="button secondary" type="button">Отправить письмо</button>
+      </section>
+      <div id="emailRecoveryStatus" class="auth-success hidden"></div>
+
+      <div class="recovery-divider"><span>или по сохранённому коду</span></div>
+
       <label><span>Код восстановления</span><input id="recoveryCodeInput" type="text" autocomplete="off" placeholder="DTE-XXXX-XXXX-XXXX-XXXX"></label>
       <label><span>Новый пароль</span><input id="recoveryPasswordInput" type="password" autocomplete="new-password" placeholder="Не менее 10 символов"></label>
       <label><span>Повторите пароль</span><input id="recoveryPasswordRepeat" type="password" autocomplete="new-password" placeholder="Повторите пароль"></label>
       <div id="recoveryError" class="auth-error hidden"></div>
       <button id="recoverPasswordButton" class="button primary wide" type="button">Сменить пароль и войти</button>
-      <p class="managed-auth-note">Если EGE был добавлен к уже существующему аккаунту и отдельный EGE-код вам не выдавался, используйте восстановление в том Navigator, где аккаунт создавался впервые.</p>
+
+      <div class="recovery-admin-fallback">
+        <span>Забыли и пароль, и код восстановления?</span>
+        <a href="https://vk.ru/im?sel=-229391051"
+           target="_blank" rel="noopener noreferrer"
+           data-admin-recovery-contact>✉ Напишите администратору</a>
+      </div>
+
+      <p class="managed-auth-note">Если EGE был добавлен к уже существующему аккаунту, пароль Supabase Auth может использоваться и в других ваших Navigator.</p>
+    </div>
+  </dialog>
+
+  <dialog id="emailResetPasswordDialog" class="dialog-shell auth-wide-dialog">
+    <div class="dialog-card managed-auth-card">
+      <button id="cancelEmailResetPasswordButton" class="dialog-close" type="button" aria-label="Отменить">×</button>
+      <span class="gold-kicker">EMAIL RECOVERY · EGE</span>
+      <h3>Создайте новый пароль</h3>
+      <p>Ссылка из письма подтверждена. Придумайте новый пароль для вашего Supabase Auth-аккаунта.</p>
+      <label><span>Новый пароль</span><input id="emailResetPasswordInput" type="password" autocomplete="new-password" placeholder="Не менее 10 символов"></label>
+      <label><span>Повторите пароль</span><input id="emailResetPasswordRepeat" type="password" autocomplete="new-password" placeholder="Повторите пароль"></label>
+      <div id="emailResetPasswordError" class="auth-error hidden"></div>
+      <button id="saveEmailResetPasswordButton" class="button primary wide" type="button">Сохранить новый пароль</button>
+      <p class="managed-auth-note">После смены пароля Navigator выдаст новый код восстановления EGE. Сохраните его.</p>
     </div>
   </dialog>
 
@@ -344,6 +379,7 @@
         </div>
         <div class="admin-panel-note">
           Здесь остаются все пользователи EGE: входившие хотя бы раз и приглашённые, которые ещё не входили. Права ЕГЭ хранятся отдельно от ОГЭ.
+          <br><strong>Важно:</strong> кнопка «Сбросить пароль» меняет пароль общего Supabase Auth. Если этот же Auth используется в ОГЭ, временный/новый пароль будет общим для обоих Navigator.
         </div>
         <div id="participantsList" class="admin-user-list"></div>
       </section>
@@ -468,6 +504,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=060-unified-login-1"></script>
+  <script src="app.js?v=061-recovery-ux-1"></script>
 </body>
 </html>

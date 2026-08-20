@@ -41,6 +41,7 @@
   });
 
   const CONTACT_TEXT = 'Здравствуйте! Хочу получить доступ к тематическому навигатору по открытому банку заданий ЕГЭ ФИПИ (English).';
+  const RECOVERY_CONTACT_TEXT = 'Здравствуйте! Не могу восстановить доступ к EGE Navigator: забыл(а) пароль и код восстановления. Помогите, пожалуйста, сбросить пароль.';
   const STATUS_META = {
     new: { label: 'Новое', icon: '○' },
     viewed: { label: 'Просмотрено', icon: '◉' },
@@ -53,6 +54,7 @@
   let currentManagedAuth = null;
   let pendingRecoveryContinuation = null;
   let pendingRecoveredLogin = null;
+  let emailRecoveryMode = false;
   let runtimeConfig = { content_source: 'fipi', demo_enabled: true, yandex_backup_ready: false };
   let userSourcePreference = null;
   let adminManagedUsers = new Map();
@@ -149,6 +151,16 @@
     recoveryPasswordRepeat: $('#recoveryPasswordRepeat'),
     recoveryError: $('#recoveryError'),
     recoverPasswordButton: $('#recoverPasswordButton'),
+    emailRecoveryOption: $('#emailRecoveryOption'),
+    sendEmailRecoveryButton: $('#sendEmailRecoveryButton'),
+    emailRecoveryStatus: $('#emailRecoveryStatus'),
+
+    emailResetPasswordDialog: $('#emailResetPasswordDialog'),
+    cancelEmailResetPasswordButton: $('#cancelEmailResetPasswordButton'),
+    emailResetPasswordInput: $('#emailResetPasswordInput'),
+    emailResetPasswordRepeat: $('#emailResetPasswordRepeat'),
+    emailResetPasswordError: $('#emailResetPasswordError'),
+    saveEmailResetPasswordButton: $('#saveEmailResetPasswordButton'),
 
     recoveryCodeDialog: $('#recoveryCodeDialog'),
     recoveryCodeValue: $('#recoveryCodeValue'),
@@ -377,6 +389,8 @@
       recovery_not_issued:'Для этого EGE-доступа отдельный код восстановления ещё не выдавался.',
       access_ended:'access_ended',
       origin_not_allowed:'Эта площадка пока не разрешена для защищённого входа.',
+      invalid_auth_user_id:'Не удалось определить Auth-пользователя.',
+      ege_access_not_found:'У пользователя не найдено право EGE.',
     };
     if (code === 'recovery_locked') {
       const mins = Math.max(1, Math.ceil(Number(error?.retryAfterSeconds || 900) / 60));
@@ -395,6 +409,32 @@
     if (!node) return;
     node.textContent = text;
     node.classList.remove('hidden');
+  }
+
+  function animateCopyButton(button, successLabel='✓ Скопировано', delay=1400) {
+    if (!button) return;
+    const original = button.dataset.originalLabel || button.textContent || '';
+    button.dataset.originalLabel = original;
+    button.textContent = successLabel;
+    button.classList.add('copy-success');
+    button.disabled = true;
+    window.setTimeout(() => {
+      button.textContent = original;
+      button.classList.remove('copy-success');
+      button.disabled = false;
+    }, delay);
+  }
+
+  function showInlineSuccess(node, text) {
+    if (!node) return;
+    node.textContent = text;
+    node.classList.remove('hidden');
+  }
+
+  function clearInlineSuccess(node) {
+    if (!node) return;
+    node.textContent = '';
+    node.classList.add('hidden');
   }
 
   function resolveCreateExpiry(select) {
@@ -607,6 +647,7 @@
       : `
           <button class="admin-mini-button" type="button" data-history="${esc(row.principal_key)}">Входы</button>
           <button class="admin-mini-button" type="button" data-edit-access="${esc(row.principal_key)}">Изменить</button>
+          ${row.managed_login_kind ? `<button class="admin-mini-button reset-password" type="button" data-reset-password="${esc(row.principal_key)}">Сбросить пароль</button>` : ''}
           <button class="admin-mini-button${quickClass}" type="button" data-quick-status="${esc(row.principal_key)}">${esc(quickLabel)}</button>
         `;
 
@@ -686,6 +727,9 @@
     });
     root.querySelectorAll('[data-history]').forEach(btn => {
       btn.addEventListener('click', () => openLoginHistory(btn.dataset.history));
+    });
+    root.querySelectorAll('[data-reset-password]').forEach(btn => {
+      btn.addEventListener('click', () => adminResetManagedPassword(btn.dataset.resetPassword, btn));
     });
   }
 
@@ -1845,6 +1889,36 @@
     }
   }
 
+  async function adminResetManagedPassword(principalKey, button) {
+    const authUserId = extractAuthUserId(principalKey);
+    if (!authUserId) return showToast('Не удалось определить Auth-пользователя.');
+
+    const row = adminUsers.find(item => item.principal_key === principalKey);
+    const label = row ? userDisplayName(row) : principalKey;
+
+    const approved = window.confirm(
+      `Сбросить пароль для ${label}?\n\n` +
+      `Будет создан новый временный пароль. Старый recovery-код EGE станет недействительным.\n\n` +
+      `ВАЖНО: пароль относится к общему Supabase Auth. Если этот же аккаунт используется в ОГЭ, временный/новый пароль будет общим для ОГЭ и ЕГЭ.`
+    );
+    if (!approved) return;
+
+    if (button) button.disabled = true;
+    try {
+      const result = await callManagedAccess({
+        action:'admin_reset_password',
+        auth_user_id:authUserId,
+      }, { requireAuth:true });
+
+      showAdminCredentials(result);
+      await refreshAdminParticipants();
+    } catch (error) {
+      showToast(managedAccessErrorText(error));
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
   function openEmailAccessAdminDialog() {
     clearInlineErrorBox(el.emailAccessAdminError);
     el.emailAccessNameInput.value = '';
@@ -1866,6 +1940,11 @@
 
   function managedCredentialsMessage(result) {
     const hello = `Здравствуйте${result.display_name ? `, ${result.display_name}` : ''}!`;
+
+    if (result.mode === 'admin_reset') {
+      const login = result.kind === 'vk' ? `VK ID: ${result.vk_user_id}` : `Email: ${result.email}`;
+      return `${hello}\n\nДля вашего доступа к EGE Navigator создан новый временный пароль.\n${login}\nВременный пароль: ${result.temporary_password}\n\nОткройте Navigator: ${window.location.origin}${window.location.pathname}\n\nВойдите с временным паролем. Navigator попросит придумать свой постоянный пароль и выдаст новый код восстановления. Сохраните этот код.\n\nЕсли вы используете этот же аккаунт в OGE Navigator, пароль Supabase Auth общий для обоих Navigator.`;
+    }
     if (result.kind === 'email') {
       if (result.existing_auth) {
         return `${hello}\n\nВам открыт доступ к EGE Navigator.\nEmail: ${result.email}\n\nВаш аккаунт уже существовал, поэтому пароль НЕ менялся. Используйте свой текущий пароль.\n\nОткрыть Navigator: ${window.location.origin}${window.location.pathname}`;
@@ -3727,17 +3806,123 @@
     }
   }
 
+  function updateEmailRecoveryOption() {
+    const login = resolveLoginIdentifier(el.recoveryIdentifierInput?.value || '');
+    const available = Boolean(login?.kind === 'email' && !/@example\.com$/i.test(login.email));
+    el.emailRecoveryOption?.classList.toggle('hidden', !available);
+    if (!available) clearInlineSuccess(el.emailRecoveryStatus);
+  }
+
   function openRecoveryDialog() {
     clearInlineError(el.recoveryError);
+    clearInlineSuccess(el.emailRecoveryStatus);
     el.recoveryIdentifierInput.value = el.loginIdentifierInput?.value?.trim() || '';
     el.recoveryCodeInput.value = '';
     el.recoveryPasswordInput.value = '';
     el.recoveryPasswordRepeat.value = '';
+    updateEmailRecoveryOption();
     if (el.authDialog?.open) el.authDialog.close();
     if (typeof el.recoveryDialog?.showModal === 'function' && !el.recoveryDialog.open) {
       el.recoveryDialog.showModal();
     }
     window.setTimeout(() => (el.recoveryIdentifierInput.value ? el.recoveryCodeInput : el.recoveryIdentifierInput)?.focus(), 40);
+  }
+
+  function emailRecoveryRedirectUrl() {
+    const url = new URL(window.location.href);
+    url.hash = '';
+    url.search = '';
+    url.searchParams.set('ege_email_recovery','1');
+    return url.toString();
+  }
+
+  async function sendEmailRecovery() {
+    clearInlineError(el.recoveryError);
+    clearInlineSuccess(el.emailRecoveryStatus);
+    const login = resolveLoginIdentifier(el.recoveryIdentifierInput.value);
+    if (!login || login.kind !== 'email' || /@example\.com$/i.test(login.email)) {
+      return showInlineError(el.recoveryError, 'Восстановление письмом доступно только для настоящего email. Для VK ID используйте код или напишите администратору.');
+    }
+
+    el.sendEmailRecoveryButton.disabled = true;
+    try {
+      const { error } = await supabaseClient.auth.resetPasswordForEmail(login.email, {
+        redirectTo: emailRecoveryRedirectUrl(),
+      });
+      if (error) throw error;
+      showInlineSuccess(
+        el.emailRecoveryStatus,
+        'Письмо для восстановления отправлено. Откройте ссылку из письма на этом устройстве. Если письма нет, проверьте «Спам» или напишите администратору.'
+      );
+    } catch (error) {
+      showInlineError(el.recoveryError, authErrorText(error));
+    } finally {
+      el.sendEmailRecoveryButton.disabled = false;
+    }
+  }
+
+  function showEmailResetPasswordDialog() {
+    emailRecoveryMode = true;
+    document.body.classList.remove('workspace-mode');
+    el.accessGate.classList.add('hidden');
+    el.appShell.classList.add('hidden');
+    el.signOutButton.classList.add('hidden');
+    el.adminButton.classList.add('hidden');
+    el.sourceBadge.classList.add('hidden');
+    clearInlineError(el.emailResetPasswordError);
+    el.emailResetPasswordInput.value = '';
+    el.emailResetPasswordRepeat.value = '';
+    if (el.authDialog?.open) el.authDialog.close();
+    if (el.recoveryDialog?.open) el.recoveryDialog.close();
+    if (typeof el.emailResetPasswordDialog?.showModal === 'function' && !el.emailResetPasswordDialog.open) {
+      el.emailResetPasswordDialog.showModal();
+    }
+    window.setTimeout(() => el.emailResetPasswordInput?.focus(), 50);
+  }
+
+  function cleanEmailRecoveryUrl() {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('ege_email_recovery');
+      const query = url.searchParams.toString();
+      window.history.replaceState({}, '', `${url.pathname}${query ? `?${query}` : ''}${url.hash || ''}`);
+    } catch {}
+  }
+
+  async function cancelEmailResetPassword() {
+    if (el.emailResetPasswordDialog?.open) el.emailResetPasswordDialog.close();
+    emailRecoveryMode = false;
+    cleanEmailRecoveryUrl();
+    try { await supabaseClient.auth.signOut(); } catch {}
+    leaveApp();
+  }
+
+  async function saveEmailResetPassword() {
+    clearInlineError(el.emailResetPasswordError);
+    const password = el.emailResetPasswordInput.value;
+    const repeat = el.emailResetPasswordRepeat.value;
+    if (password.length < 10) return showInlineError(el.emailResetPasswordError, 'Пароль должен содержать не менее 10 символов.');
+    if (password !== repeat) return showInlineError(el.emailResetPasswordError, 'Пароли не совпадают.');
+
+    el.saveEmailResetPasswordButton.disabled = true;
+    try {
+      const { error } = await supabaseClient.auth.updateUser({ password });
+      if (error) throw error;
+
+      const result = await callManagedAccess({
+        action:'finalize_email_recovery',
+      }, { requireAuth:true });
+
+      emailRecoveryMode = false;
+      cleanEmailRecoveryUrl();
+      showRecoveryCode(result.recovery_code, 'activate');
+    } catch (error) {
+      showInlineError(el.emailResetPasswordError, managedAccessErrorText(error) === 'Не удалось выполнить действие. Попробуйте ещё раз чуть позже.'
+        ? authErrorText(error)
+        : managedAccessErrorText(error));
+    } finally {
+      el.saveEmailResetPasswordButton.disabled = false;
+    }
   }
 
   function showRecoveryCode(code, continuation, recoveredLogin = null) {
@@ -3852,6 +4037,7 @@
     const code = el.recoveryCodeValue?.textContent || '';
     if (!code) return;
     const ok = await copyText(code);
+    if (ok) animateCopyButton(el.copyRecoveryCodeButton, '✓ Код скопирован');
     showToast(ok ? '✓ Код восстановления скопирован' : 'Не удалось скопировать код');
   }
 
@@ -3913,28 +4099,44 @@
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
     });
 
+    let recoveryEventSeen = false;
+    supabaseClient.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY' && session?.user) {
+        recoveryEventSeen = true;
+        currentUser = session.user;
+        setTimeout(showEmailResetPasswordDialog, 0);
+        return;
+      }
+      if (demoMode && !demoUsesAuth) return;
+      const nextUser = session?.user || null;
+      if (!nextUser) {
+        currentUser = null;
+        if (!emailRecoveryMode) leaveApp();
+      } else if (event === 'SIGNED_IN' && currentUser?.id !== nextUser.id && !emailRecoveryMode) {
+        setTimeout(() => activateUser(nextUser), 0);
+      }
+    });
+
     await loadRuntimeConfig();
 
-    const forceDemo = new URLSearchParams(window.location.search).get('demo') === '1';
+    const params = new URLSearchParams(window.location.search);
+    const forceDemo = params.get('demo') === '1';
+    const emailRecoveryRedirect = params.get('ege_email_recovery') === '1';
+
     if (forceDemo) {
       await startDemo('public');
     } else {
       const { data, error } = await supabaseClient.auth.getSession();
       if (error) console.error('Session read failed:', error);
       const user = data?.session?.user || null;
-      if (user) await activateUser(user);
-    }
 
-    supabaseClient.auth.onAuthStateChange((event, session) => {
-      if (demoMode && !demoUsesAuth) return;
-      const nextUser = session?.user || null;
-      if (!nextUser) {
-        currentUser = null;
-        leaveApp();
-      } else if (event === 'SIGNED_IN' && currentUser?.id !== nextUser.id) {
-        setTimeout(() => activateUser(nextUser), 0);
+      if (user && (recoveryEventSeen || emailRecoveryRedirect)) {
+        currentUser = user;
+        showEmailResetPasswordDialog();
+      } else if (user) {
+        await activateUser(user);
       }
-    });
+    }
   }
 
   el.openLoginButton.addEventListener('click', openAuthDialog);
@@ -3948,8 +4150,18 @@
   el.firstPasswordRepeat?.addEventListener('keydown', e => { if (e.key === 'Enter') saveFirstPassword(); });
 
   el.closeRecoveryDialogButton?.addEventListener('click', () => el.recoveryDialog.close());
+  el.recoveryIdentifierInput?.addEventListener('input', updateEmailRecoveryOption);
+  el.sendEmailRecoveryButton?.addEventListener('click', sendEmailRecovery);
   el.recoverPasswordButton?.addEventListener('click', recoverPassword);
   el.recoveryPasswordRepeat?.addEventListener('keydown', e => { if (e.key === 'Enter') recoverPassword(); });
+
+  el.cancelEmailResetPasswordButton?.addEventListener('click', cancelEmailResetPassword);
+  el.saveEmailResetPasswordButton?.addEventListener('click', saveEmailResetPassword);
+  el.emailResetPasswordRepeat?.addEventListener('keydown', e => { if (e.key === 'Enter') saveEmailResetPassword(); });
+  el.emailResetPasswordDialog?.addEventListener('cancel', event => {
+    event.preventDefault();
+    void cancelEmailResetPassword();
+  });
 
   el.copyRecoveryCodeButton?.addEventListener('click', copyRecoveryCode);
   el.confirmRecoveryCodeButton?.addEventListener('click', confirmRecoveryCodeAndContinue);
@@ -4010,6 +4222,19 @@
     });
   });
 
+  document.querySelectorAll('[data-admin-recovery-contact]').forEach(link => {
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      const href = link.href;
+      window.open(href, '_blank', 'noopener,noreferrer');
+      void copyText(RECOVERY_CONTACT_TEXT).then(ok => {
+        showToast(ok
+          ? '✓ Сообщение для восстановления скопировано'
+          : 'Открылся VK. Текст не удалось скопировать автоматически.');
+      });
+    });
+  });
+
   el.sourceBadge.addEventListener('click', toggleUserSource);
 
   el.closeAdminDialogButton.addEventListener('click', closeAdminPanel);
@@ -4039,6 +4264,7 @@
   el.closeAdminCredentialsDialogButton?.addEventListener('click', () => el.adminCredentialsDialog.close());
   el.copyAdminCredentialsButton?.addEventListener('click', async () => {
     const ok = await copyText(el.adminCredentialsText?.textContent || '');
+    if (ok) animateCopyButton(el.copyAdminCredentialsButton, '✓ Сообщение скопировано');
     showToast(ok ? '✓ Сообщение скопировано' : 'Не удалось скопировать сообщение');
   });
 
