@@ -1683,7 +1683,7 @@
     if (!model.context.length || !hasStructuredItemTable(model)) return false;
     // These FIPI buckets import one legacy merged text blob AND a clean structured table.
     // Showing both duplicates the same exercise. Prefer the structured representation.
-    return ['reading_10', 'listening_1'].includes(unit?.exam_bucket);
+    return ['reading_10', 'listening_1', 'listening_2'].includes(unit?.exam_bucket);
   }
 
   function renderContextSection(unit, model) {
@@ -1736,8 +1736,7 @@
     return (concise.length ? concise : clean).slice(0, 40);
   }
 
-  function renderItemTables(value) {
-    const rows = structuredTableRows(value);
+  function renderStructuredRows(rows) {
     if (!rows.length) return '';
     const width = Math.max(...rows.map(r => r.length));
     return `
@@ -1751,6 +1750,25 @@
     `;
   }
 
+  function splitStructuredQuestion(value) {
+    const rows = structuredTableRows(value);
+    if (!rows.length) return { question: '', rows: [] };
+
+    const first = rows[0];
+    if (first.length >= 2) {
+      const normalized = first.map(cell => backupTextClean(cell).replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru-RU'));
+      const unique = [...new Set(normalized.filter(Boolean))];
+      if (unique.length === 1 && unique[0] && !looksLikeInstruction(first[0])) {
+        return { question: backupTextClean(first[0]), rows: rows.slice(1) };
+      }
+    }
+    return { question: '', rows };
+  }
+
+  function renderItemTables(value) {
+    return renderStructuredRows(structuredTableRows(value));
+  }
+
   function renderAnswerSheet(unit) {
     let labels = [];
     let rowLabel = 'Задание';
@@ -1761,6 +1779,9 @@
     } else if (unit?.exam_bucket === 'listening_1') {
       labels = ['A','B','C','D','E','F'];
       rowLabel = 'Говорящий';
+    } else if (unit?.exam_bucket === 'listening_2') {
+      labels = ['A','B','C','D','E','F','G'];
+      rowLabel = 'Утверждение';
     } else {
       return '';
     }
@@ -1795,9 +1816,21 @@
       const only = model.items[0];
       const table = renderItemTables(only.item.item_tables);
       if (!table) return '';
+
+      const listening2Legend = unit?.exam_bucket === 'listening_2'
+        ? `
+          <div class="backup-answer-legend" aria-label="Варианты ответа">
+            <span><b>1</b> — True</span>
+            <span><b>2</b> — False</span>
+            <span><b>3</b> — Not stated</span>
+          </div>
+        `
+        : '';
+
       return `
         <section class="backup-learning-section backup-options-section">
-          <span class="backup-block-label">ВАРИАНТЫ / ТАБЛИЦА</span>
+          <span class="backup-block-label">${unit?.exam_bucket === 'listening_2' ? 'УТВЕРЖДЕНИЯ И ВАРИАНТЫ ОТВЕТА' : 'ВАРИАНТЫ / ТАБЛИЦА'}</span>
+          ${listening2Legend}
           ${table}
         </section>
       `;
@@ -1807,19 +1840,23 @@
       <section class="backup-learning-section backup-subtasks-section">
         <span class="backup-block-label">ОТДЕЛЬНЫЕ ЗАДАНИЯ</span>
         <div class="backup-items">
-          ${model.items.map(({ item, body }, index) => `
-            <article class="backup-item-card">
-              <div class="backup-item-head">
-                <div>
-                  <div class="backup-item-number">${esc(item.display_label || `Задание ${item.group_position || index + 1}`)}</div>
-                  <span class="backup-item-ref">FIPI ${esc(item.fipi_id || '—')}</span>
+          ${model.items.map(({ item, body }, index) => {
+            const structured = splitStructuredQuestion(item.item_tables);
+            const displayBody = structured.question || body;
+            return `
+              <article class="backup-item-card">
+                <div class="backup-item-head">
+                  <div>
+                    <div class="backup-item-number">${esc(item.display_label || `Задание ${item.group_position || index + 1}`)}</div>
+                    <span class="backup-item-ref">FIPI ${esc(item.fipi_id || '—')}</span>
+                  </div>
+                  <span class="backup-kes">${esc(item.live_kes_code ? `КЭС ${item.live_kes_code}` : 'КЭС —')}</span>
                 </div>
-                <span class="backup-kes">${esc(item.live_kes_code ? `КЭС ${item.live_kes_code}` : 'КЭС —')}</span>
-              </div>
-              ${body ? `<div class="backup-readable-text backup-item-text">${esc(body)}</div>` : ''}
-              ${renderItemTables(item.item_tables)}
-            </article>
-          `).join('')}
+                ${displayBody ? `<div class="backup-readable-text backup-item-text">${esc(displayBody)}</div>` : ''}
+                ${renderStructuredRows(structured.rows)}
+              </article>
+            `;
+          }).join('')}
         </div>
       </section>
     `;
@@ -1905,8 +1942,88 @@
   }
 
   function printBackupTask() {
-    document.body.classList.add('printing-backup-task');
-    window.print();
+    // Print from a clean, isolated document instead of printing the dark <dialog>.
+    // This avoids Chromium painting leftover dialog/background fragments as dark blocks.
+    const source = el.backupTaskDialog?.querySelector('.backup-task-card');
+    if (!source) return;
+
+    const clone = source.cloneNode(true);
+    clone.querySelectorAll('.dialog-close, .backup-task-actions, .backup-technical-audio-image, audio, video, .backup-media-open, .backup-spinner, .backup-media-status').forEach(node => node.remove());
+    clone.querySelectorAll('.backup-media-card').forEach(card => {
+      const hasImage = Boolean(card.querySelector('img'));
+      const hasNote = Boolean(card.querySelector('.backup-print-media-note'));
+      const hasError = Boolean(card.querySelector('.backup-media-error'));
+      if (!hasImage && !hasNote && !hasError) card.remove();
+    });
+    clone.querySelectorAll('.backup-media-grid').forEach(grid => {
+      if (!grid.children.length) grid.closest('.backup-media-section')?.remove();
+    });
+
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.position = 'fixed';
+    frame.style.right = '0';
+    frame.style.bottom = '0';
+    frame.style.width = '1px';
+    frame.style.height = '1px';
+    frame.style.border = '0';
+    frame.style.opacity = '0';
+    document.body.appendChild(frame);
+
+    const doc = frame.contentDocument;
+    if (!doc) { frame.remove(); return; }
+
+    doc.open();
+    doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(el.backupTaskTitle?.textContent || 'EGE Navigator')}</title><style>
+      @page { size: A4 portrait; margin: 12mm; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; background: #fff !important; color: #111; }
+      body { font-family: Arial, Helvetica, sans-serif; font-size: 10.5pt; line-height: 1.45; }
+      .backup-task-card { background:#fff !important; color:#111 !important; padding:0; margin:0; border:0; box-shadow:none; }
+      .backup-task-head { display:block; padding:0 0 6mm; margin:0 0 5mm; border-bottom:1px solid #777; }
+      .gold-kicker, .backup-block-label, .backup-item-number { color:#6b541b; font-weight:800; }
+      .gold-kicker, .backup-block-label { font-size:8pt; letter-spacing:.08em; text-transform:uppercase; }
+      .backup-task-head h3 { margin:2mm 0 1mm; font:700 22pt/1.1 Georgia, 'Times New Roman', serif; color:#111; }
+      .backup-task-meta, .backup-item-ref, .backup-kes { color:#555; font-size:8.5pt; }
+      .backup-task-body { display:block; overflow:visible; margin:0; padding:0; }
+      .backup-learning-section, .backup-item-card, .backup-media-card { display:block; margin:0 0 4mm; padding:4mm; border:1px solid #aaa; border-radius:3mm; background:#fff !important; color:#111 !important; break-inside:avoid; }
+      .backup-readable-text, .backup-instruction-text, .backup-context-text, .backup-item-text { color:#111 !important; white-space:pre-wrap; overflow-wrap:anywhere; }
+      .backup-instruction-text { font-weight:650; }
+      .backup-items { display:block; }
+      .backup-item-card { margin-bottom:4mm; }
+      .backup-item-head { display:flex; justify-content:space-between; gap:6mm; padding-bottom:2.5mm; margin-bottom:3mm; border-bottom:1px solid #ccc; }
+      .backup-item-number { font:700 13pt Georgia, 'Times New Roman', serif; }
+      .backup-table-wrap, .backup-answer-wrap { overflow:visible; margin-top:3mm; }
+      table { width:100%; border-collapse:collapse; color:#111; background:#fff !important; }
+      td, th { padding:2.4mm; border:1px solid #888; vertical-align:top; background:#fff !important; color:#111 !important; }
+      .backup-answer-table { table-layout:fixed; text-align:center; }
+      .backup-answer-table th:first-child { width:24mm; text-align:left; }
+      .backup-answer-entry-row td { height:11mm; }
+      .backup-answer-legend { display:flex; gap:4mm; flex-wrap:wrap; margin:0 0 3mm; }
+      .backup-answer-legend span { border:1px solid #aaa; border-radius:2mm; padding:1.5mm 2.5mm; background:#fff; }
+      .backup-media-grid { display:block; }
+      .backup-media-card img { display:block; max-width:100%; max-height:145mm; margin:0 auto; object-fit:contain; }
+      .backup-print-media-note { display:block !important; color:#555; font-size:9pt; padding:1mm 0; }
+      .backup-media-head { margin-bottom:2mm; }
+      .backup-media-kind { font-weight:700; font-size:8pt; }
+      .backup-media-error { color:#555; }
+    </style></head><body>${clone.outerHTML}</body></html>`);
+    doc.close();
+
+    const printWhenReady = () => {
+      const images = [...doc.images];
+      const pending = images.filter(img => !img.complete).map(img => new Promise(resolve => {
+        img.addEventListener('load', resolve, { once:true });
+        img.addEventListener('error', resolve, { once:true });
+      }));
+      Promise.allSettled(pending).then(() => {
+        setTimeout(() => {
+          try { frame.contentWindow?.focus(); frame.contentWindow?.print(); }
+          finally { setTimeout(() => frame.remove(), 1200); }
+        }, 80);
+      });
+    };
+    printWhenReady();
   }
 
   async function openBackupUnit(unit) {

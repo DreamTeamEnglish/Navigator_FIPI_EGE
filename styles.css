@@ -1717,3 +1717,24 @@ select option { background: #062b20; color: #effbf7; }
     color: #111 !important;
   }
 }
+
+
+/* v0.3.8 — listening 2 legend + compact structured question rendering */
+.backup-answer-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.backup-answer-legend span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid rgba(217,175,74,.28);
+  border-radius: 9px;
+  background: rgba(217,175,74,.045);
+  color: #eef7f3;
+  font-size: 11px;
+}
+.backup-answer-legend b { color: #ead591; }
