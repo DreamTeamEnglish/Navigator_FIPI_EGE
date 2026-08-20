@@ -2142,10 +2142,47 @@
       instruction = 'Напишите ответное электронное письмо, ответьте на вопросы и выполните все пункты задания.';
     }
 
+    let letterLead = '';
+    let letterQuote = letter;
+    const leadMatch = letter.match(/^(You have received (?:an email message|a letter) from[\s\S]*?who writes:)\s*([\s\S]*)$/iu);
+    if (leadMatch) {
+      letterLead = backupTextClean(leadMatch[1]);
+      letterQuote = backupTextClean(leadMatch[2]);
+    }
+
     const words = instruction.match(/Write\s+(\d+)\s*[–-]\s*(\d+)\s+words/iu)
       || text.match(/Write\s+(\d+)\s*[–-]\s*(\d+)\s+words/iu);
     const answerTitle = words ? `ВАШ ОТВЕТ (${words[1]}–${words[2]} СЛОВ)` : 'ВАШ ОТВЕТ';
-    return { instruction, letter, answerTitle };
+    return { instruction, letter, letterLead, letterQuote, answerTitle };
+  }
+
+  function writing37InstructionHtml(value) {
+    const text = backupTextClean(value);
+    if (!text) return '';
+    const inLetter = text.search(/\bIn your (?:letter|email|message)\b/iu);
+    const wordCount = text.search(/\bWrite\s+\d+\s*[–-]\s*\d+\s+words\.?/iu);
+    const remember = text.search(/\bRemember the rules of (?:letter|email) writing\.?/iu);
+
+    const intro = backupTextClean(text.slice(0, inLetter >= 0 ? inLetter : (wordCount >= 0 ? wordCount : text.length)));
+    let bullets = [];
+    if (inLetter >= 0) {
+      const bulletEnd = wordCount >= 0 ? wordCount : (remember >= 0 ? remember : text.length);
+      let block = backupTextClean(text.slice(inLetter, bulletEnd));
+      block = block.replace(/^In your (?:letter|email|message)\s*/iu, '');
+      bullets = block.split(/\s+-\s+(?=[A-Za-z])/u).map(backupTextClean).filter(Boolean);
+      if (bullets.length === 1) {
+        bullets = block.split(/\s+[–−]\s+(?=[A-Za-z])/u).map(backupTextClean).filter(Boolean);
+      }
+    }
+    const wordLine = wordCount >= 0 ? backupTextClean((text.slice(wordCount).match(/^Write\s+\d+\s*[–-]\s*\d+\s+words\.?/iu) || [])[0] || '') : '';
+    const rememberLine = remember >= 0 ? backupTextClean(text.slice(remember)) : '';
+
+    return `
+      ${intro ? `<p class="backup-writing37-action">${esc(intro)}</p>` : ''}
+      ${bullets.length ? `<div class="backup-writing37-in-letter">In your letter:</div><ul class="backup-writing37-bullets">${bullets.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${wordLine ? `<p class="backup-writing37-wordline">${esc(wordLine)}</p>` : ''}
+      ${rememberLine ? `<p class="backup-writing37-remember">${esc(rememberLine)}</p>` : ''}
+    `;
   }
 
   function renderWritingAnswerArea(title, placeholder) {
@@ -2162,14 +2199,15 @@
     const writing = writing37Model(model);
     if (!writing) return '';
     return `
-      <section class="backup-learning-section backup-instruction-section">
+      <section class="backup-learning-section backup-instruction-section backup-writing37-instruction">
         <span class="backup-block-label">ИНСТРУКЦИЯ</span>
-        <div class="backup-readable-text backup-instruction-text">${esc(writing.instruction)}</div>
+        <div class="backup-readable-text backup-instruction-text">${writing37InstructionHtml(writing.instruction)}</div>
       </section>
       ${renderMediaCards(unit)}
       <section class="backup-learning-section backup-writing-letter-section">
         <span class="backup-block-label">ПИСЬМО</span>
-        <div class="backup-readable-text backup-writing-letter">${esc(writing.letter)}</div>
+        ${writing.letterLead ? `<div class="backup-writing-letter-lead">${esc(writing.letterLead)}</div>` : ''}
+        <div class="backup-writing-letter-quote">${esc(writing.letterQuote || writing.letter)}</div>
       </section>
       ${renderWritingAnswerArea(writing.answerTitle, 'Напишите ответ здесь…')}
     `;
@@ -2486,7 +2524,7 @@
     const token = data?.session?.access_token;
     if (!token) throw new Error('Сессия Supabase не найдена.');
 
-    const url = `${CONFIG.supabaseUrl.replace(/\/$/,'')}/functions/v1/ege-backup-gateway?unit_id=${encodeURIComponent(unitId)}`;
+    const url = `${CONFIG.supabaseUrl.replace(/\/$/,'')}/functions/v1/ege-backup-gateway?unit_id=${encodeURIComponent(unitId)}&viewer=041`;
     const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!response.ok) {
       const text = await response.text().catch(() => '');
@@ -2624,6 +2662,11 @@
       .backup-writing-answer-hint { display:none; }
       .backup-print-answer-area { min-height:92mm; padding:4mm; border:1px solid #999; white-space:pre-wrap; overflow-wrap:anywhere; background:#fff !important; color:#111; }
       .backup-writing-letter-section { break-inside:auto; }
+      .backup-writing-letter-lead { margin:0 0 3mm; color:#222; }
+      .backup-writing-letter-quote { margin:0; padding:3mm 4mm; border-left:1.2mm solid #888; background:#fff !important; color:#111; font:italic 11pt/1.55 Georgia, 'Times New Roman', serif; white-space:pre-wrap; }
+      .backup-writing37-bullets { margin:2mm 0 3mm 7mm; padding-left:4mm; }
+      .backup-writing37-bullets li { margin:0 0 1mm; }
+      .backup-writing37-wordline { font-weight:700; }
       .backup-media-grid { display:block; }
       .backup-media-card img { display:block; max-width:100%; max-height:145mm; margin:0 auto; object-fit:contain; }
       .backup-print-media-note { display:block !important; color:#555; font-size:9pt; padding:1mm 0; }
@@ -2687,8 +2730,8 @@
       el.backupTaskBody.innerHTML = renderWriting38(unit, model)
         || `${renderInstructionSection(model)}${renderMediaCards(unit)}${renderContextSection(unit, model)}`;
     } else {
-      const vocabNotice = unit?.exam_bucket === 'vocabulary_30_36' && !model.vocabularyRecovered && unitJsonError
-        ? `<section class="backup-learning-section backup-recovery-note"><span class="backup-block-label">МАТЕРИАЛ ЗАДАНИЯ</span><div class="backup-readable-text">Основной текст есть в структурном Яндекс-резерве, но эта версия Edge Function пока не смогла его отдать. Варианты ответов ниже сохранены.</div></section>`
+      const vocabNotice = unit?.exam_bucket === 'vocabulary_30_36' && !model.vocabularyRecovered
+        ? `<section class="backup-learning-section backup-recovery-note"><span class="backup-block-label">МАТЕРИАЛ ЗАДАНИЯ</span><div class="backup-readable-text">Основной текст этой группы пока не найден в подключённом структурном резерве. Варианты ответов сохранены; проверьте обновление ege-backup-gateway v0.1.6.</div></section>`
         : '';
       el.backupTaskBody.innerHTML = `
         ${renderInstructionSection(model)}

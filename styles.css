@@ -1898,3 +1898,47 @@ select option { background: #062b20; color: #effbf7; }
   .backup-answer-textarea { min-height: 300px; }
   .backup-writing38-section + .backup-writing-answer-section .backup-answer-textarea { min-height: 380px; }
 }
+
+/* v0.4.1 — Writing 37: FIPI-like visual separation of the received letter. */
+.backup-writing37-instruction .backup-instruction-text p {
+  margin: 0 0 8px;
+}
+.backup-writing37-action {
+  font-weight: 750;
+}
+.backup-writing37-in-letter {
+  margin: 8px 0 3px;
+  font-weight: 700;
+  color: #d8e9e2;
+}
+.backup-writing37-bullets {
+  margin: 4px 0 9px 22px;
+  padding: 0;
+}
+.backup-writing37-bullets li {
+  margin: 3px 0;
+}
+.backup-writing37-wordline {
+  margin-top: 10px !important;
+  font-weight: 800;
+}
+.backup-writing37-remember {
+  color: #c9ddd5;
+}
+.backup-writing-letter-lead {
+  margin: 4px 0 10px;
+  color: #d7e8e1;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.backup-writing-letter-quote {
+  position: relative;
+  margin: 0;
+  padding: 15px 18px 15px 22px;
+  border-left: 3px solid rgba(217,175,74,.72);
+  border-radius: 0 12px 12px 0;
+  background: rgba(255,255,255,.035);
+  color: #f2f7f5;
+  font: italic 16px/1.75 Georgia, 'Times New Roman', serif;
+  white-space: pre-wrap;
+}
