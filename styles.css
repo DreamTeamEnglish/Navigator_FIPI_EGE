@@ -2082,3 +2082,45 @@ select option { background: #062b20; color: #effbf7; }
   .admin-default-source-group > div { width:100%; }
   .compact-source { flex:1 1 0; }
 }
+
+
+/* v0.5.1 — compact managed-access dialogs without pointless inner scrolling */
+#emailAccessAdminDialog,
+#vkAccessAdminDialog,
+#adminCredentialsDialog {
+  width: min(620px, calc(100vw - 28px));
+  max-width: none;
+  overflow: visible;
+}
+
+#emailAccessAdminDialog .managed-access-card,
+#vkAccessAdminDialog .managed-access-card,
+#adminCredentialsDialog .managed-access-card {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+}
+
+#emailAccessAdminDialog .dialog-card,
+#vkAccessAdminDialog .dialog-card {
+  padding: 26px 28px 28px;
+}
+
+/* Only genuinely small screens may scroll vertically; never horizontally. */
+@media (max-height: 680px), (max-width: 640px) {
+  #emailAccessAdminDialog,
+  #vkAccessAdminDialog,
+  #adminCredentialsDialog {
+    width: min(620px, calc(100vw - 18px));
+    max-height: calc(100vh - 18px);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  #emailAccessAdminDialog .managed-access-card,
+  #vkAccessAdminDialog .managed-access-card,
+  #adminCredentialsDialog .managed-access-card {
+    min-width: 0;
+  }
+}
