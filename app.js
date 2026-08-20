@@ -71,6 +71,7 @@
   let mediaById = new Map();
   let mediaLinksByUnit = new Map();
   let activeBackupObjectUrls = [];
+  const unitJsonCache = new Map();
 
   let demoMode = false;
   let demoUsesAuth = false;
@@ -813,7 +814,7 @@
     const [u, i, t, l, s, o, m, mm, uml] = await Promise.all([
       fetchAllRows(
         'ege_units',
-        'id,unit_key,title,exam_bucket,parent_zid,official_fipi_url,items_total,shared_context',
+        'id,unit_key,title,exam_bucket,parent_zid,official_fipi_url,items_total,shared_context,backup_json_path',
         'exam_bucket'
       ),
       fetchAllRows(
@@ -1698,7 +1699,151 @@
     return rows.join('\n\n');
   }
 
-  function unitViewerModel(unit) {
+  function htmlishText(value) {
+    let text = String(value ?? '').trim();
+    if (!text) return '';
+    if (/<[a-z][\s\S]*>/i.test(text)) {
+      try {
+        const holder = document.createElement('div');
+        holder.innerHTML = text.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p\s*>/gi, '\n\n');
+        text = holder.textContent || holder.innerText || text;
+      } catch {}
+    }
+    return backupTextClean(text);
+  }
+
+  function collectUnitJsonText(value, path = '', out = [], depth = 0) {
+    if (depth > 12 || value === null || value === undefined) return out;
+    if (typeof value === 'string') {
+      const raw = value.trim();
+      if (!raw) return out;
+      if ((raw.startsWith('{') || raw.startsWith('[')) && raw.length < 1500000) {
+        try {
+          const parsed = JSON.parse(raw);
+          collectUnitJsonText(parsed, path, out, depth + 1);
+          return out;
+        } catch {}
+      }
+      const text = htmlishText(raw);
+      if (text) out.push({ path, text });
+      return out;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((part, index) => collectUnitJsonText(part, `${path}[${index}]`, out, depth + 1));
+      return out;
+    }
+    if (typeof value === 'object') {
+      for (const [key, part] of Object.entries(value)) {
+        collectUnitJsonText(part, path ? `${path}.${key}` : key, out, depth + 1);
+      }
+    }
+    return out;
+  }
+
+  function consecutiveExamNumbers(value, expectedCount = 0) {
+    const text = backupTextClean(value);
+    const found = [...text.matchAll(/\b([1-4]?\d)\b/g)]
+      .map(match => ({ value: Number(match[1]), index: match.index ?? 0 }))
+      .filter(row => row.value >= 10 && row.value <= 45);
+    const need = Math.max(2, Number(expectedCount || 0));
+    let best = [];
+    for (let start = 0; start < found.length; start += 1) {
+      const seq = [found[start]];
+      for (let i = start + 1; i < found.length; i += 1) {
+        const last = seq[seq.length - 1].value;
+        if (found[i].value === last + 1) seq.push(found[i]);
+        else if (found[i].value > last + 1) break;
+        if (expectedCount && seq.length >= expectedCount) break;
+      }
+      if (seq.length > best.length) best = seq;
+      if (expectedCount && seq.length >= expectedCount) return seq.slice(0, expectedCount).map(row => row.value);
+    }
+    return best.length >= need ? best.map(row => row.value) : [];
+  }
+
+  function explicitBlankNumbers(value) {
+    const out = [];
+    const seen = new Set();
+    for (const match of String(value ?? '').matchAll(/\b([1-4]?\d)\s*(?=_{2,}|…{2,}|\.{4,})/g)) {
+      const n = Number(match[1]);
+      if (n >= 10 && n <= 45 && !seen.has(n)) { seen.add(n); out.push(n); }
+    }
+    return out;
+  }
+
+  function trimVocabularyPassage(value, expectedCount = 0) {
+    let text = htmlishText(value);
+    if (!text) return '';
+
+    const instructionEndPatterns = [
+      /Запишите\s+в\s+поле\s+ответа\s+цифру\s+1\s*,\s*2\s*,\s*3\s+или\s+4\s*,?\s*соответствующую\s+выбранному\s+Вами\s+варианту\s+ответа\./iu,
+      /соответствующую\s+выбранному\s+Вами\s+варианту\s+ответа\./iu,
+    ];
+    for (const re of instructionEndPatterns) {
+      const m = re.exec(text);
+      if (m) { text = backupTextClean(text.slice((m.index ?? 0) + m[0].length)); break; }
+    }
+
+    const taskMarker = text.search(/(?:^|\n|\s)Задание\s*№\s*\d+/iu);
+    if (taskMarker > 180) text = backupTextClean(text.slice(0, taskMarker));
+
+    const answerButton = text.search(/\bi\s+Ответить\b/iu);
+    if (answerButton > 180) text = backupTextClean(text.slice(0, answerButton));
+
+    const nums = explicitBlankNumbers(text).length ? explicitBlankNumbers(text) : consecutiveExamNumbers(text, expectedCount);
+    if (nums.length) {
+      const last = nums[nums.length - 1];
+      const lastMatch = [...text.matchAll(new RegExp(`\\b${last}\\b`, 'g'))].pop();
+      const searchFrom = lastMatch ? (lastMatch.index ?? 0) + String(last).length : Math.floor(text.length * 0.55);
+      const tail = text.slice(searchFrom);
+      const optionsStart = tail.search(/(?:^|\s)1\s+1[.)]\s+[A-Za-zА-ЯЁ]/u);
+      if (optionsStart >= 0) text = backupTextClean(text.slice(0, searchFrom + optionsStart));
+    }
+
+    return text;
+  }
+
+  function vocabularyInstructionFromCandidates(candidates) {
+    for (const row of candidates) {
+      const text = row.text;
+      const m = text.match(/Прочитайте\s+текст\s+с\s+пропусками[\s\S]{0,900}?соответствующую\s+выбранному\s+Вами\s+варианту\s+ответа\./iu);
+      if (m) return backupTextClean(m[0]);
+    }
+    return '';
+  }
+
+  function vocabularyModelFromUnitJson(payload, expectedCount = 0) {
+    if (!payload) return { passage: '', examNumbers: [], instruction: '' };
+    const candidates = collectUnitJsonText(payload);
+    const instruction = vocabularyInstructionFromCandidates(candidates);
+    let winner = null;
+
+    for (const row of candidates) {
+      if (row.text.length < 220) continue;
+      const passage = trimVocabularyPassage(row.text, expectedCount);
+      if (passage.length < 180) continue;
+      const explicit = explicitBlankNumbers(passage);
+      const sequence = explicit.length >= 2 ? explicit : consecutiveExamNumbers(passage, expectedCount);
+      const latinWords = (passage.match(/\b[A-Za-z][A-Za-z’'\-]{2,}\b/g) || []).length;
+      const underscores = (passage.match(/_{2,}/g) || []).length;
+      let score = Math.min(passage.length, 7000) + latinWords * 4 + underscores * 500 + sequence.length * 1400;
+      if (expectedCount && sequence.length === expectedCount) score += 5000;
+      if (/source_context|context|plain_text|page/i.test(row.path)) score += 700;
+      if (/Прочитайте\s+текст\s+с\s+пропусками/iu.test(row.text)) score += 1400;
+      if (/\b(?:Reasons|Number of respondents|Write 200[–-]250 words)\b/i.test(passage)) score -= 2500;
+      if (!winner || score > winner.score) winner = { passage, examNumbers: sequence, score };
+    }
+
+    return {
+      passage: winner?.passage || '',
+      examNumbers: expectedCount && winner?.examNumbers?.length >= expectedCount
+        ? winner.examNumbers.slice(0, expectedCount)
+        : (winner?.examNumbers || []),
+      instruction
+    };
+  }
+
+  function unitViewerModel(unit, unitJson = null) {
     const arr = (itemsByUnit.get(unit.id) || []).slice().sort((a,b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     const shared = readableJson(unit.shared_context);
     const sharedInstruction = [];
@@ -1718,10 +1863,30 @@
     }
 
     const singleContext = itemModels.length === 1 && itemModels[0].body ? [itemModels[0].body] : [];
+    let context = [...new Set([...sharedContext, ...singleContext].filter(Boolean))];
+    let instruction = bestInstruction(instructionParts, unit);
+    let examNumbers = [];
+    let vocabularyRecovered = false;
+
+    if (unit?.exam_bucket === 'vocabulary_30_36' && unitJson) {
+      const recovered = vocabularyModelFromUnitJson(unitJson, itemModels.length);
+      if (recovered.passage) {
+        context = [recovered.passage];
+        vocabularyRecovered = true;
+      }
+      if (recovered.instruction && (!instruction || /^Выберите правильный ответ\.?$/iu.test(instruction) || recovered.instruction.length > instruction.length)) {
+        instruction = recovered.instruction;
+      }
+      if (recovered.examNumbers.length === itemModels.length) examNumbers = recovered.examNumbers;
+    }
+
     return {
       items: itemModels,
-      instruction: bestInstruction(instructionParts, unit),
-      context: [...new Set([...sharedContext, ...singleContext].filter(Boolean))]
+      instruction,
+      context,
+      examNumbers,
+      vocabularyRecovered,
+      unitJsonAvailable: Boolean(unitJson)
     };
   }
 
@@ -1914,7 +2079,8 @@
     return { start: Number(m[1]), end: Number(m[2] || m[1]) };
   }
 
-  function examNumberForItem(unit, item, index) {
+  function examNumberForItem(unit, item, index, examNumbers = null) {
+    if (Array.isArray(examNumbers) && Number.isFinite(Number(examNumbers[index]))) return Number(examNumbers[index]);
     const range = bucketExamRange(unit);
     const local = Number(item?.group_position || index + 1 || 1);
     if (!range) return local;
@@ -1952,7 +2118,205 @@
     return renderStructuredRows(structuredTableRows(value));
   }
 
-  function renderAnswerSheet(unit) {
+  function stripGenericExpandedAnswerLead(value) {
+    return backupTextClean(value)
+      .replace(/^Задание\s*№\s*\d+\.\s*/iu, '')
+      .replace(/^Дайте\s+развернутый\s+ответ\.\s*/iu, '')
+      .trim();
+  }
+
+  function writing37Model(model) {
+    const row = model?.items?.[0];
+    let text = stripGenericExpandedAnswerLead(row?.body || row?.item?.item_text || model?.context?.[0] || '');
+    if (!text) return null;
+
+    const letterStart = text.search(/You have received (?:an email message|a letter) from/iu);
+    const start = letterStart >= 0 ? letterStart : 0;
+    const afterStart = text.slice(start);
+    const writeRelative = afterStart.search(/\bWrite (?:a letter|an email|a message) to\b/iu);
+    const writeStart = writeRelative >= 0 ? start + writeRelative : -1;
+
+    const letter = backupTextClean(text.slice(start, writeStart >= 0 ? writeStart : text.length));
+    let instruction = writeStart >= 0 ? backupTextClean(text.slice(writeStart)) : backupTextClean(model?.instruction || '');
+    if (!instruction || /^Дайте\s+развернутый\s+ответ\.?$/iu.test(instruction)) {
+      instruction = 'Напишите ответное электронное письмо, ответьте на вопросы и выполните все пункты задания.';
+    }
+
+    const words = instruction.match(/Write\s+(\d+)\s*[–-]\s*(\d+)\s+words/iu)
+      || text.match(/Write\s+(\d+)\s*[–-]\s*(\d+)\s+words/iu);
+    const answerTitle = words ? `ВАШ ОТВЕТ (${words[1]}–${words[2]} СЛОВ)` : 'ВАШ ОТВЕТ';
+    return { instruction, letter, answerTitle };
+  }
+
+  function renderWritingAnswerArea(title, placeholder) {
+    return `
+      <section class="backup-learning-section backup-writing-answer-section">
+        <span class="backup-block-label">${esc(title)}</span>
+        <p class="backup-writing-answer-hint">Поле можно заполнить на экране или оставить пустым для распечатки.</p>
+        <textarea class="backup-answer-textarea" spellcheck="false" placeholder="${esc(placeholder)}"></textarea>
+      </section>
+    `;
+  }
+
+  function renderWriting37(unit, model) {
+    const writing = writing37Model(model);
+    if (!writing) return '';
+    return `
+      <section class="backup-learning-section backup-instruction-section">
+        <span class="backup-block-label">ИНСТРУКЦИЯ</span>
+        <div class="backup-readable-text backup-instruction-text">${esc(writing.instruction)}</div>
+      </section>
+      ${renderMediaCards(unit)}
+      <section class="backup-learning-section backup-writing-letter-section">
+        <span class="backup-block-label">ПИСЬМО</span>
+        <div class="backup-readable-text backup-writing-letter">${esc(writing.letter)}</div>
+      </section>
+      ${renderWritingAnswerArea(writing.answerTitle, 'Напишите ответ здесь…')}
+    `;
+  }
+
+  function writingPlanHtml(value) {
+    let text = backupTextClean(value).replace(/^Use the following plan:\s*/iu, '');
+    if (!text) return '';
+    const parts = text.split(/\s+[–−]\s+(?=[A-Za-zА-ЯЁ])/u).map(backupTextClean).filter(Boolean);
+    if (parts.length < 2) {
+      const hyphenParts = text.split(/\s+-\s+(?=[A-Za-zА-ЯЁ])/u).map(backupTextClean).filter(Boolean);
+      if (hyphenParts.length >= 2) return `<ul class="backup-writing-plan-list">${hyphenParts.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
+      return `<div class="backup-readable-text backup-writing-plan-text">${esc(text)}</div>`;
+    }
+    return `<ul class="backup-writing-plan-list">${parts.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
+  }
+
+  function writing38TableRows(item) {
+    const rows = structuredTableRows(item?.item_tables || []);
+    const headerIndex = rows.findIndex(row => row.length >= 2
+      && /^Reasons$/iu.test(backupTextClean(row[0]))
+      && /Number of respondents/iu.test(backupTextClean(row[1])));
+    if (headerIndex < 0) return [];
+    const out = [rows[headerIndex]];
+    for (let i = headerIndex + 1; i < rows.length && out.length < 8; i += 1) {
+      const row = rows[i];
+      if (row.length !== 2) break;
+      if (!/^\d+(?:[.,]\d+)?%?$/u.test(backupTextClean(row[1]))) break;
+      out.push(row);
+    }
+    return out.length >= 3 ? out : [];
+  }
+
+  function splitWriting38Segments(value) {
+    const text = stripGenericExpandedAnswerLead(value);
+    if (!text) return [];
+    const starts = [...text.matchAll(/\bImagine that you are doing a project on\b/giu)].map(m => m.index ?? 0);
+    if (!starts.length) return [text];
+    const segments = [];
+    for (let i = 0; i < starts.length; i += 1) {
+      const end = i + 1 < starts.length ? starts[i + 1] : text.length;
+      const part = backupTextClean(text.slice(starts[i], end));
+      if (part) segments.push(part);
+    }
+    return segments;
+  }
+
+  function writing38AlternativeModel(segment, tableRows = []) {
+    let text = backupTextClean(segment);
+    const writeIndex = text.search(/\bWrite\s+200\s*[–-]\s*250\s+words\./iu);
+    let prompt = backupTextClean(writeIndex >= 0 ? text.slice(0, writeIndex) : text);
+    let requirements = backupTextClean(writeIndex >= 0 ? text.slice(writeIndex) : '');
+
+    const reasonsIndex = prompt.search(/\bReasons\s+Number of respondents\s*\(%\)/iu);
+    if (reasonsIndex >= 0) prompt = backupTextClean(prompt.slice(0, reasonsIndex));
+
+    const planIndex = requirements.search(/\bUse the following plan:/iu);
+    const wordLine = backupTextClean(planIndex >= 0 ? requirements.slice(0, planIndex) : requirements);
+    const plan = backupTextClean(planIndex >= 0 ? requirements.slice(planIndex) : '');
+    const wantsGraphic = /\b(?:diagram|pie chart|chart|graph)\s+below\b/iu.test(prompt);
+    const wantsTable = /\btable\s+below\b/iu.test(prompt) || tableRows.length > 0;
+    return { prompt, wordLine, plan, wantsGraphic, wantsTable };
+  }
+
+  function renderWriting38InlineMedia(unit) {
+    const rows = backupMediaForUnit(unit.id).filter(({ media }) => media?.kind === 'image');
+    if (!rows.length) return '';
+    return `
+      <div class="backup-writing-data-block">
+        <span class="backup-writing-sub-label">ДАННЫЕ / ДИАГРАММА</span>
+        <div class="backup-media-grid backup-writing-media-grid">
+          ${rows.map(({ media }, idx) => {
+            const ready = Boolean(media.backup_ready && media.backup_path);
+            return `
+              <article class="backup-media-card image-card backup-writing-media-card" data-backup-media-card="${esc(media.media_id)}">
+                <div class="backup-media-head">
+                  <span class="backup-media-kind">Изображение ${idx + 1}</span>
+                  <span class="backup-media-status">${ready ? 'Яндекс-резерв' : 'недоступно'}</span>
+                </div>
+                <div class="backup-media-slot" data-backup-media-slot="${esc(media.media_id)}">
+                  ${ready ? `<div class="backup-loading"><div class="backup-spinner"></div>Загружаю…</div>` : `<div class="backup-media-error">Резервный файл недоступен.</div>`}
+                </div>
+              </article>`;
+          }).join('')}
+        </div>
+      </div>`;
+  }
+
+  function renderWriting38(unit, model) {
+    const row = model?.items?.[0];
+    const source = row?.body || row?.item?.item_text || model?.context?.[0] || '';
+    const segments = splitWriting38Segments(source);
+    if (!segments.length) return '';
+    const tableRows = writing38TableRows(row?.item);
+    let mediaUsed = false;
+
+    const instructionText = segments.length > 1
+      ? 'Выберите ОДИН из предложенных вариантов задания и выполните его согласно данному плану.'
+      : (model?.instruction && !/^Дайте\s+развернутый\s+ответ\.?$/iu.test(model.instruction)
+          ? model.instruction
+          : 'Выполните письменное задание согласно данному плану.');
+
+    const variants = segments.map((segment, index) => {
+      const alt = writing38AlternativeModel(segment, index === 0 ? tableRows : []);
+      const tableHtml = index === 0 && tableRows.length ? renderStructuredRows(tableRows) : '';
+      let mediaHtml = '';
+      if (alt.wantsGraphic && !mediaUsed) {
+        mediaHtml = renderWriting38InlineMedia(unit);
+        if (mediaHtml) mediaUsed = true;
+      }
+      return `
+        <article class="backup-writing-variant">
+          <div class="backup-writing-variant-head">
+            <span>ВАРИАНТ ${index + 1}</span>
+          </div>
+          <div class="backup-writing-part">
+            <span class="backup-writing-sub-label">ЗАДАНИЕ</span>
+            <div class="backup-readable-text backup-writing-prompt">${esc(alt.prompt)}</div>
+          </div>
+          ${tableHtml ? `<div class="backup-writing-data-block"><span class="backup-writing-sub-label">ДАННЫЕ / ТАБЛИЦА</span>${tableHtml}</div>` : ''}
+          ${mediaHtml}
+          ${alt.wordLine ? `<div class="backup-writing-word-count">${esc(alt.wordLine)}</div>` : ''}
+          ${alt.plan ? `<div class="backup-writing-plan"><span class="backup-writing-sub-label">ПЛАН</span>${writingPlanHtml(alt.plan)}</div>` : ''}
+        </article>`;
+    }).join('');
+
+    // If a legacy task has an image but its text does not explicitly say diagram/chart,
+    // keep the media visible instead of silently losing it.
+    const leftoverMedia = !mediaUsed && backupMediaForUnit(unit.id).some(({ media }) => media?.kind === 'image')
+      ? renderWriting38InlineMedia(unit)
+      : '';
+
+    return `
+      <section class="backup-learning-section backup-instruction-section">
+        <span class="backup-block-label">ИНСТРУКЦИЯ</span>
+        <div class="backup-readable-text backup-instruction-text">${esc(instructionText)}</div>
+      </section>
+      <section class="backup-learning-section backup-writing38-section">
+        <span class="backup-block-label">МАТЕРИАЛ ЗАДАНИЯ</span>
+        <div class="backup-writing-variants">${variants}</div>
+        ${leftoverMedia}
+      </section>
+      ${renderWritingAnswerArea('ВАШЕ ЭССЕ (200–250 СЛОВ)', 'Напишите эссе здесь…')}
+    `;
+  }
+
+  function renderAnswerSheet(unit, model = null) {
     let labels = [];
     let rowLabel = 'Задание';
 
@@ -1969,8 +2333,12 @@
       labels = ['A','B','C','D','E','F','G'];
       rowLabel = 'Утверждение';
     } else if (['listening_3_9','reading_12_18','grammar_19_24','wordformation_25_29','vocabulary_30_36'].includes(unit?.exam_bucket)) {
-      const range = bucketExamRange(unit);
-      if (range) labels = Array.from({ length: range.end - range.start + 1 }, (_, i) => String(range.start + i));
+      if (Array.isArray(model?.examNumbers) && model.examNumbers.length) {
+        labels = model.examNumbers.map(String);
+      } else {
+        const range = bucketExamRange(unit);
+        if (range) labels = Array.from({ length: range.end - range.start + 1 }, (_, i) => String(range.start + i));
+      }
     } else {
       return '';
     }
@@ -2039,7 +2407,7 @@
         <span class="backup-block-label">ОТДЕЛЬНЫЕ ЗАДАНИЯ</span>
         <div class="backup-items">
           ${model.items.map(({ item, body }, index) => {
-            const examNo = examNumberForItem(unit, item, index);
+            const examNo = examNumberForItem(unit, item, index, model.examNumbers);
             const choice = choiceModelFromTables(item.item_tables);
             const grammar = grammarLike ? grammarPairFromTables(item.item_tables, body) : null;
 
@@ -2112,6 +2480,23 @@
     `;
   }
 
+  async function gatewayFetchUnitJson(unitId) {
+    if (unitJsonCache.has(unitId)) return unitJsonCache.get(unitId);
+    const { data } = await supabaseClient.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) throw new Error('Сессия Supabase не найдена.');
+
+    const url = `${CONFIG.supabaseUrl.replace(/\/$/,'')}/functions/v1/ege-backup-gateway?unit_id=${encodeURIComponent(unitId)}`;
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`${response.status}: ${text || 'структурный резерв задания недоступен'}`);
+    }
+    const payload = await response.json();
+    unitJsonCache.set(unitId, payload);
+    return payload;
+  }
+
   async function gatewayFetchMedia(mediaId) {
     const { data } = await supabaseClient.auth.getSession();
     const token = data?.session?.access_token;
@@ -2164,6 +2549,15 @@
     if (!source) return;
 
     const clone = source.cloneNode(true);
+    const sourceAreas = [...source.querySelectorAll('.backup-answer-textarea')];
+    const cloneAreas = [...clone.querySelectorAll('.backup-answer-textarea')];
+    cloneAreas.forEach((area, index) => {
+      const replacement = document.createElement('div');
+      replacement.className = 'backup-print-answer-area';
+      const value = sourceAreas[index]?.value?.trim() || '';
+      if (value) replacement.textContent = value;
+      area.replaceWith(replacement);
+    });
     clone.querySelectorAll('.dialog-close, .backup-task-actions, .backup-technical-audio-image, audio, video, .backup-media-open, .backup-spinner, .backup-media-status').forEach(node => node.remove());
     clone.querySelectorAll('.backup-media-card').forEach(card => {
       const hasImage = Boolean(card.querySelector('img'));
@@ -2220,6 +2614,16 @@
       .backup-source-word-line { display:flex; justify-content:space-between; gap:4mm; margin-top:3mm; padding:2.4mm; border:1px solid #aaa; background:#fff !important; }
       .backup-source-word-line span { color:#555; font-size:8.5pt; font-weight:700; text-transform:uppercase; }
       .backup-source-word-line strong { color:#111; }
+      .backup-writing-variant { margin:0 0 5mm; padding:4mm; border:1px solid #999; background:#fff !important; break-inside:auto; }
+      .backup-writing-variant-head { font-weight:800; margin-bottom:3mm; }
+      .backup-writing-sub-label { display:block; margin:0 0 2mm; color:#555; font-size:8pt; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
+      .backup-writing-data-block, .backup-writing-plan, .backup-writing-part { margin-top:3mm; }
+      .backup-writing-plan-list { margin:2mm 0 0 6mm; padding-left:5mm; }
+      .backup-writing-plan-list li { margin:0 0 1.5mm; }
+      .backup-writing-word-count { margin-top:3mm; font-weight:800; }
+      .backup-writing-answer-hint { display:none; }
+      .backup-print-answer-area { min-height:92mm; padding:4mm; border:1px solid #999; white-space:pre-wrap; overflow-wrap:anywhere; background:#fff !important; color:#111; }
+      .backup-writing-letter-section { break-inside:auto; }
       .backup-media-grid { display:block; }
       .backup-media-card img { display:block; max-width:100%; max-height:145mm; margin:0 auto; object-fit:contain; }
       .backup-print-media-note { display:block !important; color:#555; font-size:9pt; padding:1mm 0; }
@@ -2245,22 +2649,57 @@
     printWhenReady();
   }
 
+  function viewerUnitTitle(unit, model) {
+    if (unit?.exam_bucket === 'vocabulary_30_36' && Array.isArray(model?.examNumbers) && model.examNumbers.length >= 2) {
+      const start = model.examNumbers[0];
+      const end = model.examNumbers[model.examNumbers.length - 1];
+      return `Лексика · задания ${start}–${end}`;
+    }
+    return unitTitle(unit);
+  }
+
   async function openBackupUnit(unit) {
     revokeBackupObjectUrls();
 
-    const model = unitViewerModel(unit);
     el.backupTaskTitle.textContent = unitTitle(unit);
     el.backupTaskMeta.textContent = `${unitReference(unit)} · ${unitKes(unit)}`;
     el.backupOfficialLink.href = unit.official_fipi_url;
-    el.backupTaskBody.innerHTML = `
-      ${renderInstructionSection(model)}
-      ${renderMediaCards(unit)}
-      ${renderContextSection(unit, model)}
-      ${renderBackupItems(unit, model)}
-      ${renderAnswerSheet(unit)}
-    `;
-
+    el.backupTaskBody.innerHTML = '<div class="backup-viewer-loading"><div class="backup-spinner"></div>Собираю учебную страницу…</div>';
     if (typeof el.backupTaskDialog.showModal === 'function') el.backupTaskDialog.showModal();
+
+    let unitJson = null;
+    let unitJsonError = null;
+    if (unit?.exam_bucket === 'vocabulary_30_36' && unit.backup_json_path) {
+      try { unitJson = await gatewayFetchUnitJson(unit.id); }
+      catch (error) {
+        unitJsonError = error;
+        console.warn('Unit JSON backup unavailable:', error);
+      }
+    }
+
+    const model = unitViewerModel(unit, unitJson);
+    el.backupTaskTitle.textContent = viewerUnitTitle(unit, model);
+
+    if (unit?.exam_bucket === 'writing_37') {
+      el.backupTaskBody.innerHTML = renderWriting37(unit, model)
+        || `${renderInstructionSection(model)}${renderMediaCards(unit)}${renderContextSection(unit, model)}`;
+    } else if (unit?.exam_bucket === 'writing_38') {
+      el.backupTaskBody.innerHTML = renderWriting38(unit, model)
+        || `${renderInstructionSection(model)}${renderMediaCards(unit)}${renderContextSection(unit, model)}`;
+    } else {
+      const vocabNotice = unit?.exam_bucket === 'vocabulary_30_36' && !model.vocabularyRecovered && unitJsonError
+        ? `<section class="backup-learning-section backup-recovery-note"><span class="backup-block-label">МАТЕРИАЛ ЗАДАНИЯ</span><div class="backup-readable-text">Основной текст есть в структурном Яндекс-резерве, но эта версия Edge Function пока не смогла его отдать. Варианты ответов ниже сохранены.</div></section>`
+        : '';
+      el.backupTaskBody.innerHTML = `
+        ${renderInstructionSection(model)}
+        ${renderMediaCards(unit)}
+        ${renderContextSection(unit, model)}
+        ${vocabNotice}
+        ${renderBackupItems(unit, model)}
+        ${renderAnswerSheet(unit, model)}
+      `;
+    }
+
     await markViewed(unit);
     // Media loads automatically, exactly like the OGE reserve viewer.
     void loadAllBackupMedia(unit);

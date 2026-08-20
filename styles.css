@@ -1763,3 +1763,138 @@ select option { background: #062b20; color: #effbf7; }
   font-size: 13px;
   letter-spacing: .025em;
 }
+
+/* v0.4.0 — vocabulary source recovery + structured writing 37/38 */
+.backup-viewer-loading {
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #a8c4ba;
+  font-size: 13px;
+}
+.backup-recovery-note {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(217,175,74,.24);
+  background: rgba(217,175,74,.04);
+}
+.backup-writing-letter-section,
+.backup-writing-answer-section,
+.backup-writing38-section {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(159,200,185,.18);
+  background: rgba(255,255,255,.03);
+}
+.backup-writing-letter {
+  font-size: 15.5px;
+  line-height: 1.72;
+}
+.backup-writing-answer-section {
+  border-color: rgba(217,175,74,.27);
+  background: rgba(217,175,74,.045);
+}
+.backup-writing-answer-hint {
+  margin: -1px 0 10px;
+  color: #91afa4;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.backup-answer-textarea {
+  display: block;
+  width: 100%;
+  min-height: 340px;
+  resize: vertical;
+  padding: 14px 15px;
+  border: 1px solid rgba(217,175,74,.28);
+  border-radius: 11px;
+  outline: none;
+  background: rgba(1,21,16,.35);
+  color: #eef7f3;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.backup-writing38-section + .backup-writing-answer-section .backup-answer-textarea {
+  min-height: 460px;
+}
+.backup-answer-textarea::placeholder { color: #76988c; }
+.backup-answer-textarea:focus {
+  border-color: rgba(232,209,141,.65);
+  box-shadow: 0 0 0 2px rgba(217,175,74,.07);
+}
+.backup-writing-variants {
+  display: grid;
+  gap: 14px;
+}
+.backup-writing-variant {
+  padding: 15px 16px;
+  border: 1px solid rgba(159,200,185,.19);
+  border-radius: 13px;
+  background: rgba(255,255,255,.025);
+}
+.backup-writing-variant-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -2px 0 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid rgba(159,200,185,.12);
+}
+.backup-writing-variant-head span {
+  color: #f2dc9e;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 16px;
+  font-weight: 800;
+}
+.backup-writing-part,
+.backup-writing-data-block,
+.backup-writing-plan {
+  margin-top: 13px;
+}
+.backup-writing-part:first-of-type { margin-top: 0; }
+.backup-writing-sub-label {
+  display: block;
+  margin-bottom: 7px;
+  color: #9dbbb0;
+  font-size: 8.5px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.backup-writing-prompt {
+  font-size: 15px;
+  line-height: 1.68;
+}
+.backup-writing-word-count {
+  margin-top: 14px;
+  color: #f4ead0;
+  font-size: 14px;
+  font-weight: 800;
+}
+.backup-writing-plan-list {
+  margin: 6px 0 0;
+  padding-left: 21px;
+  color: #edf6f2;
+  font-size: 14px;
+  line-height: 1.58;
+}
+.backup-writing-plan-list li { margin-bottom: 5px; }
+.backup-writing-plan-text { font-size: 14px; }
+.backup-writing-media-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.backup-writing-media-card {
+  max-width: 760px;
+}
+.backup-writing-media-card img {
+  max-height: 520px;
+}
+
+@media (max-width: 700px) {
+  .backup-answer-textarea { min-height: 300px; }
+  .backup-writing38-section + .backup-writing-answer-section .backup-answer-textarea { min-height: 380px; }
+}
