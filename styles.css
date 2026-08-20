@@ -1638,3 +1638,82 @@ select option { background: #062b20; color: #effbf7; }
   .admin-demo-actions { width: 100%; }
   .admin-demo-actions .button { flex: 1 1 0; }
 }
+
+/* v0.3.7 — reserve viewer cleanup: no duplicate legacy block + answer grids + eco print */
+.backup-answer-section {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(217,175,74,.26);
+  background: rgba(217,175,74,.045);
+}
+.backup-answer-wrap { overflow-x: auto; }
+.backup-answer-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  color: #eef7f3;
+  font-size: 12px;
+  text-align: center;
+}
+.backup-answer-table th,
+.backup-answer-table td {
+  height: 38px;
+  padding: 7px 8px;
+  border: 1px solid rgba(217,175,74,.30);
+  vertical-align: middle;
+}
+.backup-answer-table th:first-child {
+  width: 92px;
+  text-align: left;
+  color: #ead591;
+}
+.backup-answer-entry-row td {
+  background: rgba(255,255,255,.025);
+}
+
+@media print {
+  /* Chromium can fragment <dialog> backgrounds across pages. Force a genuinely white eco-print tree. */
+  body.printing-backup-task #backupTaskDialog,
+  body.printing-backup-task #backupTaskDialog .backup-task-card,
+  body.printing-backup-task #backupTaskDialog .backup-task-body,
+  body.printing-backup-task #backupTaskDialog .backup-learning-section,
+  body.printing-backup-task #backupTaskDialog .backup-item-card,
+  body.printing-backup-task #backupTaskDialog .backup-media-card,
+  body.printing-backup-task #backupTaskDialog .backup-media-slot,
+  body.printing-backup-task #backupTaskDialog .backup-table-wrap,
+  body.printing-backup-task #backupTaskDialog .backup-answer-wrap,
+  body.printing-backup-task #backupTaskDialog .backup-answer-section {
+    background: #fff !important;
+    background-image: none !important;
+    box-shadow: none !important;
+  }
+  body.printing-backup-task #backupTaskDialog::before,
+  body.printing-backup-task #backupTaskDialog::after,
+  body.printing-backup-task .backup-task-card::before,
+  body.printing-backup-task .backup-task-card::after,
+  body.printing-backup-task .backup-task-body::before,
+  body.printing-backup-task .backup-task-body::after {
+    display: none !important;
+    content: none !important;
+  }
+  body.printing-backup-task .backup-technical-audio-image {
+    display: none !important;
+  }
+  body.printing-backup-task .backup-answer-section {
+    border-color: #999 !important;
+    break-inside: avoid;
+  }
+  body.printing-backup-task .backup-answer-table {
+    color: #111 !important;
+  }
+  body.printing-backup-task .backup-answer-table th,
+  body.printing-backup-task .backup-answer-table td {
+    height: 11mm !important;
+    border-color: #777 !important;
+    background: #fff !important;
+    color: #111 !important;
+  }
+  body.printing-backup-task .backup-answer-table th:first-child {
+    color: #111 !important;
+  }
+}

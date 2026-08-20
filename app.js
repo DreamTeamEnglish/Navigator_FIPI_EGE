@@ -1611,6 +1611,13 @@
     text = text.replace(/^Задание\s*№\s*\d+\.\s*/iu, '').trim();
     if (!text) return { instruction: '', body: '' };
 
+    if (unit?.exam_bucket === 'listening_1') {
+      // FIPI often stores a short generic lead followed by the complete listening instruction.
+      // Keep the whole instruction block together and leave the statements for the structured table.
+      const m = text.match(/^(.*?Занесите свои ответы в таблицу\.)\s*/isu);
+      if (m) return { instruction: backupTextClean(m[1]), body: backupTextClean(text.slice(m[0].length)) };
+    }
+
     if (unit?.exam_bucket === 'reading_10') {
       const m = text.match(/^(.*?В задании один заголовок лишний\.)\s*/isu);
       if (m) return { instruction: backupTextClean(m[1]), body: backupTextClean(text.slice(m[0].length)) };
@@ -1668,8 +1675,19 @@
     `;
   }
 
-  function renderContextSection(model) {
-    if (!model.context.length) return '';
+  function hasStructuredItemTable(model) {
+    return model.items.some(({ item }) => structuredTableRows(item?.item_tables).length > 0);
+  }
+
+  function shouldSuppressLegacyContext(unit, model) {
+    if (!model.context.length || !hasStructuredItemTable(model)) return false;
+    // These FIPI buckets import one legacy merged text blob AND a clean structured table.
+    // Showing both duplicates the same exercise. Prefer the structured representation.
+    return ['reading_10', 'listening_1'].includes(unit?.exam_bucket);
+  }
+
+  function renderContextSection(unit, model) {
+    if (!model.context.length || shouldSuppressLegacyContext(unit, model)) return '';
     return `
       <section class="backup-learning-section backup-context-card">
         <span class="backup-block-label">МАТЕРИАЛ ЗАДАНИЯ</span>
@@ -1702,6 +1720,14 @@
       seen.add(normalized);
       // One-cell rows are usually duplicates of the visible task text, not a table.
       if (cells.length < 2) continue;
+
+      // Some FIPI imports repeat the complete instruction in both columns of the first row.
+      // The instruction is already rendered above, so this row must not appear in the options table.
+      const normalizedCells = cells.map(cell => cell.replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru-RU'));
+      const uniqueCells = [...new Set(normalizedCells)];
+      if (uniqueCells.length === 1 && looksLikeInstruction(cells[0])) continue;
+      if (cells.every(cell => looksLikeInstruction(cell))) continue;
+
       clean.push(cells);
     }
     // Prefer concise rows: imported FIPI tables often contain one giant duplicate row
@@ -1722,6 +1748,41 @@
           </tbody>
         </table>
       </div>
+    `;
+  }
+
+  function renderAnswerSheet(unit) {
+    let labels = [];
+    let rowLabel = 'Задание';
+
+    if (unit?.exam_bucket === 'reading_10') {
+      labels = ['A','B','C','D','E','F','G'];
+      rowLabel = 'Текст';
+    } else if (unit?.exam_bucket === 'listening_1') {
+      labels = ['A','B','C','D','E','F'];
+      rowLabel = 'Говорящий';
+    } else {
+      return '';
+    }
+
+    return `
+      <section class="backup-learning-section backup-answer-section">
+        <span class="backup-block-label">ТАБЛИЦА ОТВЕТОВ</span>
+        <div class="backup-answer-wrap">
+          <table class="backup-answer-table" aria-label="Таблица ответов">
+            <tbody>
+              <tr>
+                <th>${esc(rowLabel)}</th>
+                ${labels.map(label => `<th>${esc(label)}</th>`).join('')}
+              </tr>
+              <tr class="backup-answer-entry-row">
+                <th>Ответ</th>
+                ${labels.map(() => '<td>&nbsp;</td>').join('')}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     `;
   }
 
@@ -1767,6 +1828,7 @@
   function renderMediaCards(unit) {
     const rows = backupMediaForUnit(unit.id);
     if (!rows.length) return '';
+    const hasAudio = rows.some(({ media }) => media?.kind === 'audio');
 
     return `
       <section class="backup-learning-section backup-media-section">
@@ -1775,8 +1837,11 @@
           ${rows.map(({ media }, idx) => {
             const ready = Boolean(media.backup_ready && media.backup_path);
             const kind = media.kind || 'other';
+            // Listening tasks in FIPI often contain a purely technical “Прослушать аудиозапись” image.
+            // Keep it on screen for fidelity, but mark it so eco-print can omit it.
+            const technicalAudioPrompt = hasAudio && kind === 'image';
             return `
-              <article class="backup-media-card ${kind === 'image' ? 'image-card' : ''}" data-backup-media-card="${esc(media.media_id)}">
+              <article class="backup-media-card ${kind === 'image' ? 'image-card' : ''} ${technicalAudioPrompt ? 'backup-technical-audio-image' : ''}" data-backup-media-card="${esc(media.media_id)}">
                 <div class="backup-media-head">
                   <span class="backup-media-kind">${esc(kind === 'audio' ? 'Аудио' : kind === 'image' ? 'Изображение' : kind === 'video' ? 'Видео' : 'Media')} ${idx + 1}</span>
                   <span class="backup-media-status">${ready ? 'Яндекс-резерв' : 'недоступно'}</span>
@@ -1854,8 +1919,9 @@
     el.backupTaskBody.innerHTML = `
       ${renderInstructionSection(model)}
       ${renderMediaCards(unit)}
-      ${renderContextSection(model)}
+      ${renderContextSection(unit, model)}
       ${renderBackupItems(unit, model)}
+      ${renderAnswerSheet(unit)}
     `;
 
     if (typeof el.backupTaskDialog.showModal === 'function') el.backupTaskDialog.showModal();
