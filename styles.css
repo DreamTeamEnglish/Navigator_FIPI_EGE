@@ -2328,3 +2328,407 @@ select option { background: #062b20; color: #effbf7; }
   .email-recovery-option .button { width: 100%; }
   .recovery-admin-fallback a { white-space: normal; }
 }
+
+
+/* =========================================================
+   EGE COMPACT UI v0.6.2
+   Visual-only workspace compaction. No catalog/access/viewer logic.
+   ========================================================= */
+
+/* Keep filter names accessible without spending a visual row. */
+.filter-caption {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+.compact-hidden-meta { display: none !important; }
+.reset-short { display: none; }
+
+/* 1. Top workspace header: one compact visual line. */
+.workspace-mode .topbar {
+  padding: 6px 18px 5px;
+  gap: 12px;
+  min-height: 0;
+  align-items: center;
+}
+.workspace-mode .brand { gap: 9px; }
+.workspace-mode .brand-logo-link {
+  width: 38px;
+  height: 38px;
+  flex-basis: 38px;
+  border-radius: 10px;
+}
+.workspace-mode .brand-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.workspace-mode .brand-copy .eyebrow {
+  flex: 0 0 auto;
+  font-size: 7px;
+  letter-spacing: .11em;
+}
+.workspace-mode .brand h1 {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+.workspace-mode .brand p {
+  min-width: 0;
+  margin: 0;
+  font-size: 9px;
+  line-height: 1;
+}
+.workspace-mode .auth-area { gap: 5px; flex-wrap: nowrap; }
+.workspace-mode .auth-area .cloud-badge,
+.workspace-mode .auth-area .button {
+  min-height: 29px;
+  padding: 0 9px;
+  border-radius: 9px;
+  font-size: 8px;
+}
+.workspace-mode .auth-area .cloud-badge { border-radius: 999px; }
+
+/* 2. Control deck: six visual levels -> two. */
+.workspace-mode .app-shell {
+  padding: 4px 18px 8px;
+}
+.workspace-mode .control-deck {
+  padding: 8px 10px 7px;
+  border-radius: 15px;
+}
+.workspace-mode .deck-head { gap: 10px; align-items: center; }
+.workspace-mode .deck-copy h2 {
+  margin: 0;
+  font-size: clamp(18px, 1.65vw, 24px);
+  line-height: 1.05;
+}
+.workspace-mode .deck-copy p { display: none !important; }
+.workspace-mode .hero-stats {
+  gap: 4px;
+  align-items: center;
+}
+.workspace-mode .stat {
+  min-width: 0;
+  padding: 4px 7px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+.workspace-mode .stat strong {
+  display: inline;
+  font-size: 12px;
+  line-height: 1;
+}
+.workspace-mode .stat span {
+  font-size: 6.5px;
+  line-height: 1;
+  letter-spacing: .045em;
+}
+
+/* 3. Filter captions are inside default options/placeholders. */
+.workspace-mode .filter-grid {
+  margin-top: 6px;
+  gap: 6px;
+  align-items: center;
+}
+.workspace-mode .filter-grid label { position: relative; min-width: 0; }
+.workspace-mode .filter-grid input,
+.workspace-mode .filter-grid select {
+  min-height: 32px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 10px;
+}
+.workspace-mode .reset-button {
+  min-height: 32px;
+  height: 32px;
+  padding-inline: 10px;
+  font-size: 10px;
+}
+.workspace-mode .current-row {
+  margin-top: 5px;
+  min-height: 18px;
+  padding-top: 4px;
+  gap: 8px;
+}
+.workspace-mode .current-selection { font-size: 9px; }
+.workspace-mode .section-meta { font-size: 8.5px; }
+
+/* 4. More room for the matrix. */
+.workspace-mode .matrix-shell {
+  margin-top: 5px;
+  border-radius: 14px;
+}
+.workspace-mode .matrix-track {
+  gap: 9px;
+  padding: 0 12px 18px;
+}
+.workspace-mode .bucket-header {
+  min-height: 39px;
+  padding: 6px 8px 5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.workspace-mode .bucket-kicker { display: none !important; }
+.workspace-mode .bucket-header h3 {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.1;
+}
+.workspace-mode .bucket-count {
+  flex: 0 0 auto;
+  font-size: 7.5px;
+  white-space: nowrap;
+}
+.workspace-mode .card-stack {
+  gap: 6px;
+  padding: 6px 6px 12px;
+}
+
+/* 5. Cards: remove empty air, preserve primary title readability. */
+.workspace-mode .unit-card {
+  padding: 8px 9px 7px;
+  border-radius: 11px;
+}
+.workspace-mode .unit-card.status-viewed,
+.workspace-mode .unit-card.status-used { padding-left: 7px; }
+.workspace-mode .card-top { gap: 5px; }
+.workspace-mode .fipi-ref { font-size: 8px; }
+.workspace-mode .card-top-actions { gap: 4px; }
+.workspace-mode .unit-count-badge {
+  padding: 2px 5px;
+  font-size: 7px;
+}
+.workspace-mode .topic-edit-button {
+  width: 27px;
+  height: 27px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.workspace-mode .manual-override-marker {
+  min-height: 17px;
+  padding: 0 5px;
+  font-size: 6.5px;
+}
+.workspace-mode .unit-card h4 {
+  margin: 4px 0 3px;
+  font-size: 12.5px;
+  line-height: 1.2;
+}
+.workspace-mode .kes-line {
+  font-size: 8px;
+  line-height: 1.2;
+}
+.workspace-mode .topic-tags {
+  gap: 3px;
+  margin-top: 4px;
+}
+.workspace-mode .topic-tag {
+  padding: 2px 5px;
+  font-size: 7.5px;
+  line-height: 1.15;
+}
+.workspace-mode .card-footer {
+  margin-top: 5px;
+  padding-top: 5px;
+  gap: 5px;
+}
+.workspace-mode .status-button {
+  min-height: 23px;
+  padding: 0 6px;
+  border-radius: 7px;
+  font-size: 7px;
+}
+.workspace-mode .open-hint { font-size: 7.5px; }
+
+/* Tablet: preserve two-row filters while keeping deck shallow. */
+@media (max-width: 1180px) {
+  .workspace-mode .topbar { padding-inline: 12px; }
+  .workspace-mode .app-shell { padding-inline: 10px; }
+  .workspace-mode .filter-grid { gap: 5px; }
+}
+
+/* Mobile target: full first card + a meaningful part of the second. */
+@media (max-width: 760px) {
+  :root { --col-width: min(90vw, 360px); --col-gap: 7px; }
+
+  .workspace-mode .topbar {
+    padding: 4px 8px 4px;
+    gap: 6px;
+    align-items: center;
+  }
+  .workspace-mode .brand { gap: 6px; }
+  .workspace-mode .brand-logo-link {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+    border-radius: 9px;
+  }
+  .workspace-mode .brand-copy { display: block; }
+  .workspace-mode .brand-copy .eyebrow,
+  .workspace-mode .brand p { display: none !important; }
+  .workspace-mode .brand h1 { font-size: 18px; }
+  .workspace-mode .auth-area { gap: 3px; margin-left: auto; }
+  .workspace-mode .auth-area .cloud-badge,
+  .workspace-mode .auth-area .button {
+    min-height: 27px;
+    height: 27px;
+    padding: 0 6px;
+    border-radius: 8px;
+    font-size: 8px;
+    white-space: nowrap;
+  }
+  .workspace-mode .auth-area .cloud-badge { border-radius: 999px; }
+  .workspace-mode .cloud-badge.live { display: none; }
+  .workspace-mode .source-prefix { display: none; }
+
+  .workspace-mode .app-shell {
+    padding: 3px 5px 6px;
+  }
+  .workspace-mode .control-deck {
+    padding: 6px 7px 6px;
+    border-radius: 12px;
+  }
+  .workspace-mode .deck-head {
+    gap: 5px;
+    align-items: center;
+  }
+  .workspace-mode .deck-copy { flex: 1 1 auto; }
+  .workspace-mode .deck-copy h2 {
+    font-size: 15.5px;
+    line-height: 1.04;
+  }
+  .workspace-mode .hero-stats {
+    flex: 0 0 auto;
+    gap: 2px;
+  }
+  .workspace-mode .hero-stats .stat:nth-child(1),
+  .workspace-mode .hero-stats .stat:nth-child(2) { display: inline-flex; }
+  .workspace-mode .stat {
+    padding: 3px 4px;
+    gap: 2px;
+    border-radius: 7px;
+  }
+  .workspace-mode .stat strong { font-size: 9.5px; }
+  .workspace-mode .stat span { font-size: 5.3px; letter-spacing: 0; }
+
+  .workspace-mode .filter-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    margin-top: 4px;
+    gap: 4px;
+  }
+  .workspace-mode .filter-grid .search-label {
+    grid-column: 1;
+  }
+  .workspace-mode .filter-grid input,
+  .workspace-mode .filter-grid select {
+    min-height: 29px;
+    height: 29px;
+    padding: 0 7px;
+    font-size: 9px;
+  }
+  .workspace-mode .reset-button {
+    grid-column: 2;
+    min-height: 29px;
+    height: 29px;
+    padding: 0 7px;
+    font-size: 13px;
+  }
+  .workspace-mode .reset-long { display: none; }
+  .workspace-mode .reset-short { display: inline; }
+  .workspace-mode .current-row {
+    margin-top: 3px;
+    min-height: 15px;
+    padding-top: 3px;
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+  }
+  .workspace-mode .current-selection {
+    font-size: 7.5px;
+    max-width: 58%;
+  }
+  .workspace-mode .section-meta {
+    margin: 0;
+    align-self: auto;
+    margin-left: auto;
+    font-size: 7px;
+    white-space: nowrap;
+  }
+
+  .workspace-mode .matrix-shell { margin-top: 4px; border-radius: 11px; }
+  .workspace-mode .matrix-track {
+    gap: 7px;
+    padding: 0 6px 12px;
+  }
+  .workspace-mode .bucket-header {
+    min-height: 34px;
+    padding: 5px 7px 4px;
+  }
+  .workspace-mode .bucket-header h3 { font-size: 12px; }
+  .workspace-mode .bucket-count { font-size: 7px; }
+  .workspace-mode .card-stack {
+    gap: 5px;
+    padding: 5px 5px 9px;
+  }
+  .workspace-mode .unit-card {
+    padding: 7px 8px 6px;
+    border-radius: 10px;
+  }
+  .workspace-mode .unit-card.status-viewed,
+  .workspace-mode .unit-card.status-used { padding-left: 6px; }
+  .workspace-mode .fipi-ref { font-size: 7.5px; }
+  .workspace-mode .topic-edit-button { width: 25px; height: 25px; font-size: 12px; }
+  .workspace-mode .unit-card h4 {
+    margin: 3px 0 2px;
+    font-size: 12px;
+    line-height: 1.16;
+  }
+  .workspace-mode .kes-line { font-size: 7.5px; }
+  .workspace-mode .topic-tags { margin-top: 3px; gap: 2px; }
+  .workspace-mode .topic-tag { padding: 2px 4px; font-size: 7px; }
+  .workspace-mode .card-footer { margin-top: 4px; padding-top: 4px; }
+  .workspace-mode .status-button { min-height: 22px; font-size: 6.8px; }
+  .workspace-mode .open-hint { font-size: 7px; }
+  .workspace-mode .matrix-arrow { width: 27px; height: 44px; }
+}
+
+@media (max-width: 480px) {
+  :root { --col-width: min(90vw, 350px); }
+  .workspace-mode .brand-logo-link {
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
+  }
+  .workspace-mode .brand h1 { font-size: 17px; }
+  .workspace-mode #adminButton {
+    width: 28px;
+    min-width: 28px;
+    padding: 0;
+    font-size: 0;
+  }
+  .workspace-mode #adminButton::after {
+    content: '⚙';
+    font-size: 13px;
+  }
+  .workspace-mode .auth-area .source { display: inline-flex; }
+  .workspace-mode .deck-copy h2 { font-size: 14.5px; }
+  .workspace-mode .stat span { display: none; }
+  .workspace-mode .stat strong { font-size: 9px; }
+  .workspace-mode .stat { padding-inline: 5px; }
+}

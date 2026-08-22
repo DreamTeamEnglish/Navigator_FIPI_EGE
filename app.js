@@ -959,7 +959,9 @@
 
     el.sourceBadge.classList.toggle('hidden', !fullUser && !demoMode);
     el.sourceBadge.disabled = !fullUser;
-    el.sourceBadge.textContent = demoMode ? 'FIPI · DEMO' : (backup ? 'Источник: ЯНДЕКС' : 'Источник: FIPI');
+    el.sourceBadge.innerHTML = demoMode
+      ? '<span class="source-name">FIPI · DEMO</span>'
+      : `<span class="source-prefix">Источник: </span><span class="source-name">${backup ? 'ЯНДЕКС' : 'FIPI'}</span>`;
 
     if (demoMode) {
       el.sourceBadge.title = 'DEMO открывает официальный источник ФИПИ';
@@ -1231,7 +1233,7 @@
   function populateTopics() {
     const keep = el.topicSelect.value || 'all';
     el.topicSelect.innerHTML =
-      '<option value="all">Все темы</option>' +
+      '<option value="all">Тема: все</option>' +
       topTopics().map(t => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('');
 
     if ([...el.topicSelect.options].some(o => o.value === keep)) el.topicSelect.value = keep;
@@ -1252,7 +1254,7 @@
       return `<option value="${esc(s.id)}">${esc(label)}</option>`;
     }).join('');
 
-    el.subtopicSelect.innerHTML = `<option value="all">Все подтемы</option>${options}`;
+    el.subtopicSelect.innerHTML = `<option value="all">Подтема: все</option>${options}`;
 
     if ([...el.subtopicSelect.options].some(o => o.value === keep)) el.subtopicSelect.value = keep;
     else el.subtopicSelect.value = 'all';
@@ -1260,7 +1262,7 @@
 
   function populateBuckets() {
     el.bucketSelect.innerHTML =
-      '<option value="all">Все 15 разделов</option>' +
+      '<option value="all">Раздел ЕГЭ: все 15</option>' +
       BUCKETS.map(b => `<option value="${esc(b.id)}">${esc(b.label)}</option>`).join('');
   }
 
@@ -1487,7 +1489,7 @@
           <span class="fipi-ref" title="${esc(unit.unit_key)}">${esc(unitReference(unit))}</span>
           <span class="card-top-actions">
             ${hasTopicOverride(unit.id) ? '<span class="manual-override-marker" title="Есть ручная тематическая правка">ручная</span>' : ''}
-            <span class="unit-count-badge">${esc(countLabel(arr.length))}</span>
+            ${arr.length > 1 ? `<span class="unit-count-badge">${esc(countLabel(arr.length))}</span>` : ''}
             ${currentAccess?.role === 'admin'
               ? `<button class="topic-edit-button" type="button" data-edit-topic="${esc(unit.id)}" title="Изменить темы и подтемы">✎</button>`
               : ''}
@@ -1554,7 +1556,6 @@
       return `
         <section class="bucket-column" data-bucket="${esc(bucket.id)}">
           <header class="bucket-header">
-            <span class="bucket-kicker">${esc(bucket.group)}</span>
             <h3>${esc(bucket.short)}</h3>
             <div class="bucket-count">${arr.length} ${arr.length === 1 ? 'карточка' : 'карточек'}</div>
           </header>
@@ -1569,8 +1570,17 @@
 
     const itemCount = filtered.reduce((sum, unit) => sum + (itemsByUnit.get(unit.id)?.length || 0), 0);
     el.visibleCount.textContent = String(filtered.length);
-    el.currentSelection.innerHTML = `<strong>Сейчас:</strong> ${esc(selectionLabel())}`;
-    el.sectionMeta.textContent = `${filtered.length} карточек · ${itemCount} позиций`;
+
+    const hasActiveFilter =
+      (el.topicSelect.value || 'all') !== 'all' ||
+      (el.subtopicSelect.value || 'all') !== 'all' ||
+      (el.bucketSelect.value || 'all') !== 'all' ||
+      (el.statusSelect.value || 'all') !== 'all' ||
+      Boolean(el.searchInput.value.trim());
+    const currentRow = el.currentSelection.closest('.current-row');
+    currentRow?.classList.toggle('hidden', !hasActiveFilter);
+    el.currentSelection.innerHTML = `<strong>Фильтр:</strong> ${esc(selectionLabel())}`;
+    el.sectionMeta.textContent = `Найдено: ${filtered.length} карточек · ${itemCount} заданий`;
     el.emptyState.classList.toggle('hidden', filtered.length !== 0);
 
     bindMatrixEvents();

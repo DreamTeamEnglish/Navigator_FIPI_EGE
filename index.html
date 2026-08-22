@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <title>EGE Navigator · FIPI · DreamTeam English</title>
-  <link rel="stylesheet" href="styles.css?v=061-recovery-ux-1">
+  <link rel="stylesheet" href="styles.css?v=062-compact-ui-1">
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -24,7 +24,7 @@
     </div>
 
     <div class="auth-area">
-      <button id="sourceBadge" class="cloud-badge source source-toggle hidden" type="button">Источник: FIPI</button>
+      <button id="sourceBadge" class="cloud-badge source source-toggle hidden" type="button"><span class="source-prefix">Источник: </span><span class="source-name">FIPI</span></button>
       <span id="cloudBadge" class="cloud-badge protected">PROTECTED</span>
       <button id="adminButton" class="button secondary hidden" type="button">⚙ ADMIN</button>
       <button id="signOutButton" class="button ghost hidden" type="button">Выйти</button>
@@ -67,12 +67,11 @@
     <section class="control-deck">
       <div class="deck-head">
         <div class="deck-copy">
-          <span id="modeKicker" class="gold-kicker">TOPIC-FIRST · 15 EXAM BUCKETS</span>
-          <h2>Выберите тему — и соберите весь урок в одной строке</h2>
-          <p>Тема — главный вход в каталог. Раздел экзамена показывает, где эта тема встречается.</p>
+          <span id="modeKicker" class="gold-kicker compact-hidden-meta" aria-hidden="true">TOPIC-FIRST · 15 EXAM BUCKETS</span>
+          <h2>Выберите тему — соберите весь урок в одной строке</h2>
         </div>
         <div class="hero-stats" aria-label="Статистика каталога">
-          <div class="stat"><strong id="unitCount">—</strong><span>units</span></div>
+          <div class="stat"><strong id="unitCount">—</strong><span>юнитов</span></div>
           <div class="stat"><strong id="itemCount">—</strong><span>заданий</span></div>
           <div class="stat accent"><strong id="visibleCount">—</strong><span>карточек</span></div>
         </div>
@@ -80,35 +79,35 @@
 
       <div class="filter-grid">
         <label>
-          <span>Тема</span>
-          <select id="topicSelect"></select>
+          <span class="filter-caption">Тема</span>
+          <select id="topicSelect" aria-label="Тема"></select>
         </label>
         <label>
-          <span>Подтема</span>
-          <select id="subtopicSelect"></select>
+          <span class="filter-caption">Подтема</span>
+          <select id="subtopicSelect" aria-label="Подтема"></select>
         </label>
         <label>
-          <span>Раздел ЕГЭ</span>
-          <select id="bucketSelect"></select>
+          <span class="filter-caption">Раздел ЕГЭ</span>
+          <select id="bucketSelect" aria-label="Раздел ЕГЭ"></select>
         </label>
         <label>
-          <span>Статус</span>
-          <select id="statusSelect">
-            <option value="all">Все</option>
-            <option value="new">Новые</option>
-            <option value="viewed">Просмотренные</option>
-            <option value="used">Использованные</option>
+          <span class="filter-caption">Статус</span>
+          <select id="statusSelect" aria-label="Статус">
+            <option value="all">Статус: все</option>
+            <option value="new">Статус: новые</option>
+            <option value="viewed">Статус: просмотренные</option>
+            <option value="used">Статус: использованные</option>
           </select>
         </label>
         <label class="search-label">
-          <span>Быстрый поиск</span>
-          <input id="searchInput" type="search" placeholder="FIPI ID, КЭС, слово…">
+          <span class="filter-caption">Быстрый поиск</span>
+          <input id="searchInput" type="search" aria-label="Быстрый поиск" placeholder="Поиск: FIPI ID, КЭС, слово…">
         </label>
-        <button id="resetButton" class="button ghost reset-button" type="button">Сбросить</button>
+        <button id="resetButton" class="button ghost reset-button" type="button" aria-label="Сбросить фильтры"><span class="reset-long">Сбросить</span><span class="reset-short" aria-hidden="true">↺</span></button>
       </div>
 
-      <div class="current-row">
-        <div id="currentSelection" class="current-selection"><strong>Сейчас:</strong> Все темы</div>
+      <div class="current-row hidden">
+        <div id="currentSelection" class="current-selection"><strong>Фильтр:</strong> Все темы</div>
         <div id="sectionMeta" class="section-meta">—</div>
       </div>
     </section>
@@ -504,6 +503,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=061-recovery-ux-1"></script>
+  <script src="app.js?v=062-compact-ui-1"></script>
 </body>
 </html>
