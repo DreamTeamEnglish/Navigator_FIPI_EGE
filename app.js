@@ -4,7 +4,9 @@
   const CONFIG = window.EGE_CONFIG || window.OGE_CONFIG || {};
   const PAGE_SIZE = 1000;
 
-  // v0.6.7 — STRICT NO-PROXY + visual/media/status repair.
+  // v0.6.9 — FORCE FRONTEND SYNC. STRICT NO-PROXY + visual/media/status repair.
+  window.__EGE_FRONTEND_BUILD__ = '0.6.9-force-sync';
+  console.info('EGE Navigator frontend build: 0.6.9-force-sync');
   // Supabase is ONLY the customs layer: Auth/access, statuses, metadata and short-lived signed URLs.
   // Catalog, media and vocabulary cache bytes are fetched DIRECTLY by the browser from Yandex Object Storage.
   const EGE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-delivery`;
