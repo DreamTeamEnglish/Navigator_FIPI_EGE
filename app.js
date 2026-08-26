@@ -4,9 +4,9 @@
   const CONFIG = window.EGE_CONFIG || window.OGE_CONFIG || {};
   const PAGE_SIZE = 1000;
 
-  // v0.7.0 — WRITING 37/38 STRUCTURE FIX. STRICT NO-PROXY preserved.
-  window.__EGE_FRONTEND_BUILD__ = '0.7.0-writing-fix';
-  console.info('EGE Navigator frontend build: 0.7.0-writing-fix');
+  // v0.7.1 — SPEAKING 4 ALL FIPI FORMATS FIX. STRICT NO-PROXY preserved.
+  window.__EGE_FRONTEND_BUILD__ = '0.7.1-speaking4-fix';
+  console.info('EGE Navigator frontend build: 0.7.1-speaking4-fix');
   // Supabase is ONLY the customs layer: Auth/access, statuses, metadata and short-lived signed URLs.
   // Catalog, media and vocabulary cache bytes are fetched DIRECTLY by the browser from Yandex Object Storage.
   const EGE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-delivery`;
@@ -2739,28 +2739,65 @@
     return { intro, points, closing };
   }
 
+  function speakingTask4SplitPoints(value) {
+    const text = backupTextClean(value);
+    if (!text) return [];
+
+    // Newer FIPI variants use · / • bullets.
+    let points = text
+      .split(/[·•]\s*/u)
+      .map(x => backupTextClean(x).replace(/^[;:,\s]+|[;,.]\s*$/gu, '').trim())
+      .filter(Boolean);
+
+    // Transitional FIPI variants have no bullet glyphs and separate the four
+    // requirements only with semicolons.
+    if (points.length < 2) {
+      points = text
+        .split(/;\s+(?=(?:give|say|mention|express|explain|outline|compare|describe)\b)/iu)
+        .map(x => backupTextClean(x).replace(/^[;:,\s]+|[;,.]\s*$/gu, '').trim())
+        .filter(Boolean);
+    }
+
+    return points;
+  }
+
   function speakingTask4Model(model) {
     const source = speakingCleanTail(speakingSourceText(model));
     if (!source) return null;
 
-    const colonIndex = source.search(/photographs:\s*/iu);
+    // All three FIPI generations are normalized to:
+    // intro -> bullet requirements -> closing.
+    //
+    // 1) Classic:
+    //    "... compare and contrast the photographs: · give ... · say ..."
+    // 2) Modern:
+    //    "In 2.5 minutes be ready to: · explain ... · mention ..."
+    // 3) Transitional:
+    //    "In 2.5 minutes be ready to: give ...; say ...; mention ...; express ..."
+    const readyMarker = /\bIn\s+\d+(?:[.,]\d+)?\s+minutes?\s+be\s+ready\s+to:\s*/iu;
+    const classicMarker = /(?:compare\s+and\s+contrast\s+the\s+photographs|photographs):\s*/iu;
+
+    const readyMatch = readyMarker.exec(source);
+    const classicMatch = classicMarker.exec(source);
+    const marker = readyMatch || classicMatch;
+
     let intro = source;
     let points = [];
     let closing = '';
 
-    if (colonIndex >= 0) {
-      const m = /photographs:\s*/iu.exec(source.slice(colonIndex));
-      const afterStart = colonIndex + (m?.[0]?.length || 0);
+    if (marker) {
+      const markerIndex = marker.index ?? 0;
+      const afterStart = markerIndex + marker[0].length;
       intro = backupTextClean(source.slice(0, afterStart));
+
       const after = source.slice(afterStart);
-      const closingIndex = after.search(/You\s+will\s+speak\s+for\s+not\s+more\s+than\s+2\s+minutes/iu);
+      const closingIndex = after.search(
+        /You\s+will\s+speak\s+for\s+not\s+more\s+than\s+[23]\s+minutes?(?:\s*\([^)]*\))?\.?/iu
+      );
+
       const bulletText = closingIndex >= 0 ? after.slice(0, closingIndex) : after;
       closing = speakingCleanTail(closingIndex >= 0 ? after.slice(closingIndex) : '');
-
-      points = bulletText
-        .split(/[·•]\s*/u)
-        .map(x => backupTextClean(x).replace(/[;,.]\s*$/u, '').trim())
-        .filter(Boolean);
+      points = speakingTask4SplitPoints(bulletText);
     }
 
     return { intro, points, closing };
