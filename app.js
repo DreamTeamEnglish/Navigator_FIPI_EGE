@@ -4,6 +4,13 @@
   const CONFIG = window.EGE_CONFIG || window.OGE_CONFIG || {};
   const PAGE_SIZE = 1000;
 
+  // v0.6.3 HYBRID — common EGE catalog may come from private Yandex Object Storage.
+  // Supabase remains the live source for Auth/access, statuses and manual topic overrides.
+  const EGE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-delivery`;
+  const EGE_CATALOG_DB_NAME = 'ege-protected-catalog-v1';
+  const EGE_CATALOG_DB_VERSION = 1;
+  const EGE_CATALOG_STORE = 'catalogs';
+
   const BUCKETS = [
     { id: 'listening_1', label: 'Аудирование · задание 1', short: 'Аудирование 1', group: 'Аудирование' },
     { id: 'listening_2', label: 'Аудирование · задание 2', short: 'Аудирование 2', group: 'Аудирование' },
@@ -1076,6 +1083,279 @@
     }
   }
 
+
+  function openEgeCatalogDb() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) return reject(new Error('IndexedDB unavailable'));
+      const request = indexedDB.open(EGE_CATALOG_DB_NAME, EGE_CATALOG_DB_VERSION);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(EGE_CATALOG_STORE)) {
+          db.createObjectStore(EGE_CATALOG_STORE, { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('IndexedDB open failed'));
+    });
+  }
+
+  async function readEgeCatalogCache(meta) {
+    let db = null;
+    try {
+      db = await openEgeCatalogDb();
+      const row = await new Promise((resolve, reject) => {
+        const tx = db.transaction(EGE_CATALOG_STORE, 'readonly');
+        const req = tx.objectStore(EGE_CATALOG_STORE).get('current');
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error || new Error('IndexedDB read failed'));
+      });
+      if (!row) return null;
+      if (
+        row.version !== meta.version ||
+        row.sha256 !== meta.sha256 ||
+        Number(row.bytes) !== Number(meta.bytes) ||
+        !row.catalog
+      ) return null;
+      return row.catalog;
+    } catch (error) {
+      console.warn('EGE catalog IndexedDB read unavailable:', error);
+      return null;
+    } finally {
+      try { db?.close(); } catch {}
+    }
+  }
+
+  async function writeEgeCatalogCache(meta, catalog) {
+    let db = null;
+    try {
+      db = await openEgeCatalogDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(EGE_CATALOG_STORE, 'readwrite');
+        tx.objectStore(EGE_CATALOG_STORE).put({
+          id: 'current',
+          version: meta.version,
+          sha256: meta.sha256,
+          bytes: Number(meta.bytes),
+          saved_at: new Date().toISOString(),
+          catalog
+        });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error('IndexedDB write failed'));
+        tx.onabort = () => reject(tx.error || new Error('IndexedDB write aborted'));
+      });
+    } catch (error) {
+      // Cache failure must never break the Navigator; Object Storage data is already verified.
+      console.warn('EGE catalog IndexedDB write unavailable:', error);
+    } finally {
+      try { db?.close(); } catch {}
+    }
+  }
+
+  async function sha256HexBytes(bytes) {
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+    );
+    return [...new Uint8Array(digest)]
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  async function decodeGzipJson(bytes) {
+    if (typeof DecompressionStream !== 'function') {
+      throw new Error('Browser does not support gzip DecompressionStream');
+    }
+    const stream = new Blob([bytes]).stream()
+      .pipeThrough(new DecompressionStream('gzip'));
+    const text = await new Response(stream).text();
+    return JSON.parse(text);
+  }
+
+  function validateEgeCatalogObject(catalog, meta) {
+    if (!catalog || catalog.format !== 'EGE_NAVIGATOR_CATALOG') {
+      throw new Error('Unexpected EGE catalog format');
+    }
+    const tables = catalog.tables || {};
+    const required = [
+      'ege_units',
+      'ege_items',
+      'ege_topics',
+      'ege_unit_topics',
+      'ege_media',
+      'ege_unit_media'
+    ];
+    for (const key of required) {
+      if (!Array.isArray(tables[key])) throw new Error(`EGE catalog table missing: ${key}`);
+    }
+
+    const expected = meta.counts || {};
+    const actual = {
+      units: tables.ege_units.length,
+      items: tables.ege_items.length,
+      topics: tables.ege_topics.length,
+      unit_topics: tables.ege_unit_topics.length,
+      media: tables.ege_media.length,
+      unit_media: tables.ege_unit_media.length,
+    };
+    for (const key of Object.keys(actual)) {
+      if (Number(expected[key]) !== Number(actual[key])) {
+        throw new Error(`EGE catalog count mismatch: ${key} ${actual[key]} != ${expected[key]}`);
+      }
+    }
+    return tables;
+  }
+
+  async function requestEgeCatalogDelivery() {
+    const token = await currentAccessToken();
+    if (!token) throw Object.assign(new Error('EGE catalog auth token missing'), { authFailure: true });
+
+    let response;
+    try {
+      response = await fetch(EGE_DELIVERY_FUNCTION_URL, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'apikey': configuredKey()
+        },
+        cache: 'no-store'
+      });
+    } catch (error) {
+      throw Object.assign(new Error(`EGE delivery network error: ${error?.message || error}`), { technicalFailure: true });
+    }
+
+    let payload = null;
+    try { payload = await response.json(); } catch { payload = null; }
+
+    if (response.status === 409 && payload?.error === 'object_storage_not_enabled') {
+      return { mode: 'legacy' };
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw Object.assign(
+        new Error(payload?.error || `EGE delivery HTTP ${response.status}`),
+        { authFailure: true }
+      );
+    }
+    if (!response.ok || !payload?.catalog?.url) {
+      throw Object.assign(
+        new Error(payload?.error || `EGE delivery HTTP ${response.status}`),
+        { technicalFailure: true }
+      );
+    }
+
+    return {
+      mode: payload.delivery_mode || 'hybrid',
+      meta: {
+        version: String(payload.catalog.version || ''),
+        sha256: String(payload.catalog.sha256 || '').toLowerCase(),
+        bytes: Number(payload.catalog.bytes || 0),
+        counts: payload.catalog.counts || {},
+        url: payload.catalog.url
+      }
+    };
+  }
+
+  async function fetchEgeCatalogFromObjectStorage(meta) {
+    const cached = await readEgeCatalogCache(meta);
+    if (cached) {
+      const tables = validateEgeCatalogObject(cached, meta);
+      console.info(
+        `EGE catalog ${meta.version}: IndexedDB cache hit ` +
+        `(${tables.ege_units.length} units, ${tables.ege_items.length} items).`
+      );
+      return tables;
+    }
+
+    const response = await fetch(meta.url, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`EGE Object Storage HTTP ${response.status}`);
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength !== meta.bytes) {
+      throw new Error(`EGE catalog byte mismatch: ${bytes.byteLength} != ${meta.bytes}`);
+    }
+
+    const sha = await sha256HexBytes(bytes);
+    if (sha !== meta.sha256) {
+      throw new Error(`EGE catalog SHA-256 mismatch`);
+    }
+
+    const catalog = await decodeGzipJson(bytes);
+    const tables = validateEgeCatalogObject(catalog, meta);
+    await writeEgeCatalogCache(meta, catalog);
+
+    console.info(
+      `EGE catalog ${meta.version}: Object Storage download ` +
+      `(${tables.ege_units.length} units, ${tables.ege_items.length} items, ${bytes.byteLength} bytes).`
+    );
+    return tables;
+  }
+
+  async function loadLegacySharedCatalog() {
+    const [u, i, t, l, mm, uml] = await Promise.all([
+      fetchAllRows(
+        'ege_units',
+        'id,unit_key,title,exam_bucket,parent_zid,official_fipi_url,items_total,shared_context,backup_json_path',
+        'exam_bucket'
+      ),
+      fetchAllRows(
+        'ege_items',
+        'id,unit_id,card_key,fipi_id,display_label,group_position,live_kes_code,item_text,item_tables,sort_order',
+        'sort_order'
+      ),
+      fetchAllRows(
+        'ege_topics',
+        'id,parent_id,level,slug,label,official_code,sort_order,is_active',
+        'sort_order'
+      ),
+      fetchAllRows(
+        'ege_unit_topics',
+        'unit_id,topic_id,source,confidence,is_primary,note',
+        'unit_id'
+      ),
+      fetchAllRows(
+        'ege_media',
+        'media_id,kind,extension,official_url,backup_path,backup_ready,integrity_status,content_type,note',
+        'media_id'
+      ),
+      fetchAllRows(
+        'ege_unit_media',
+        'unit_id,media_id,sort_order',
+        'unit_id'
+      )
+    ]);
+
+    return {
+      ege_units: u,
+      ege_items: i,
+      ege_topics: t,
+      ege_unit_topics: l,
+      ege_media: mm,
+      ege_unit_media: uml
+    };
+  }
+
+  async function loadProtectedSharedCatalog() {
+    try {
+      const delivery = await requestEgeCatalogDelivery();
+
+      if (delivery.mode === 'legacy') {
+        console.info('EGE delivery manifest is LEGACY; using protected Supabase catalog.');
+        return await loadLegacySharedCatalog();
+      }
+
+      return await fetchEgeCatalogFromObjectStorage(delivery.meta);
+    } catch (error) {
+      if (error?.authFailure) throw error;
+
+      // During HYBRID rollout a technical Object Storage problem must not lock
+      // teachers out. The old protected Supabase catalog remains the fallback.
+      console.warn(
+        'EGE Object Storage catalog unavailable; protected Supabase fallback.',
+        error
+      );
+      return await loadLegacySharedCatalog();
+    }
+  }
+
   async function loadDemoCatalog() {
     const { data, error } = await supabaseClient.rpc('ege_demo_catalog');
     if (error) throw error;
@@ -1115,65 +1395,43 @@
   async function loadCatalog() {
     const principal = currentPrincipalKey();
 
-    const [u, i, t, l, s, o, m, mm, uml] = await Promise.all([
-      fetchAllRows(
-        'ege_units',
-        'id,unit_key,title,exam_bucket,parent_zid,official_fipi_url,items_total,shared_context,backup_json_path',
-        'exam_bucket'
-      ),
-      fetchAllRows(
-        'ege_items',
-        'id,unit_id,card_key,fipi_id,display_label,group_position,live_kes_code,item_text,item_tables,sort_order',
-        'sort_order'
-      ),
-      fetchAllRows(
-        'ege_topics',
-        'id,parent_id,level,slug,label,official_code,sort_order,is_active',
-        'sort_order'
-      ),
-      fetchAllRows(
-        'ege_unit_topics',
-        'unit_id,topic_id,source,confidence,is_primary,note',
-        'unit_id'
-      ),
-      principal
-        ? fetchAllRows(
-            'ege_task_status',
-            'principal_key,item_id,status,updated_at',
-            'updated_at',
-            { column: 'principal_key', value: principal }
-          )
-        : Promise.resolve([]),
-      fetchAllRows(
-        'ege_unit_topic_overrides',
-        'unit_id,mode,note,updated_at,updated_by',
-        'unit_id'
-      ),
-      fetchAllRows(
-        'ege_unit_topic_manual',
-        'unit_id,topic_id,updated_at,updated_by',
-        'unit_id'
-      ),
-      fetchAllRows(
-        'ege_media',
-        'media_id,kind,extension,official_url,backup_path,backup_ready,integrity_status,content_type,note',
-        'media_id'
-      ),
-      fetchAllRows(
-        'ege_unit_media',
-        'unit_id,media_id,sort_order',
-        'unit_id'
-      )
+    // Six large/common tables come from Object Storage when HYBRID is enabled.
+    // Three small/live datasets stay in Supabase and are always current.
+    const [shared, live] = await Promise.all([
+      loadProtectedSharedCatalog(),
+      Promise.all([
+        principal
+          ? fetchAllRows(
+              'ege_task_status',
+              'principal_key,item_id,status,updated_at',
+              'updated_at',
+              { column: 'principal_key', value: principal }
+            )
+          : Promise.resolve([]),
+        fetchAllRows(
+          'ege_unit_topic_overrides',
+          'unit_id,mode,note,updated_at,updated_by',
+          'unit_id'
+        ),
+        fetchAllRows(
+          'ege_unit_topic_manual',
+          'unit_id,topic_id,updated_at,updated_by',
+          'unit_id'
+        )
+      ])
     ]);
 
-    units = u;
-    items = i;
-    topics = t;
-    unitTopicLinks = l;
+    const [s, o, m] = live;
+
+    units = shared.ege_units || [];
+    items = shared.ege_items || [];
+    topics = shared.ege_topics || [];
+    unitTopicLinks = shared.ege_unit_topics || [];
+    media = shared.ege_media || [];
+    unitMediaLinks = shared.ege_unit_media || [];
+
     topicOverrides = o;
     manualTopicLinks = m;
-    media = mm;
-    unitMediaLinks = uml;
 
     mediaById = new Map(media.map(x => [x.media_id, x]));
     mediaLinksByUnit = new Map();
@@ -1202,7 +1460,6 @@
     }
 
     rebuildManualTopicMaps();
-
     itemStatus = new Map(s.map(row => [row.item_id, row.status]));
 
     el.unitCount.textContent = String(units.length);
@@ -1286,16 +1543,6 @@
       fetchAllRows(
         'ege_unit_topic_manual',
         'unit_id,topic_id,updated_at,updated_by',
-        'unit_id'
-      ),
-      fetchAllRows(
-        'ege_media',
-        'media_id,kind,extension,official_url,backup_path,backup_ready,integrity_status,content_type,note',
-        'media_id'
-      ),
-      fetchAllRows(
-        'ege_unit_media',
-        'unit_id,media_id,sort_order',
         'unit_id'
       )
     ]);
