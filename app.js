@@ -4,10 +4,12 @@
   const CONFIG = window.EGE_CONFIG || window.OGE_CONFIG || {};
   const PAGE_SIZE = 1000;
 
-  // v0.6.3 HYBRID — common EGE catalog may come from private Yandex Object Storage.
-  // Supabase remains the live source for Auth/access, statuses and manual topic overrides.
+  // v0.6.6 — STRICT NO-PROXY delivery.
+  // Supabase is ONLY the customs layer: Auth/access, statuses, metadata and short-lived signed URLs.
+  // Catalog, media and vocabulary cache bytes are fetched DIRECTLY by the browser from Yandex Object Storage.
   const EGE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-delivery`;
   const EGE_MEDIA_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-media-delivery`;
+  const EGE_CACHE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-cache-delivery`;
   const EGE_CATALOG_DB_NAME = 'ege-protected-catalog-v1';
   const EGE_CATALOG_DB_VERSION = 1;
   const EGE_CATALOG_STORE = 'catalogs';
@@ -1228,7 +1230,7 @@
     try { payload = await response.json(); } catch { payload = null; }
 
     if (response.status === 409 && payload?.error === 'object_storage_not_enabled') {
-      return { mode: 'legacy' };
+      throw Object.assign(new Error('EGE Object Storage catalog is not enabled.'), { technicalFailure: true });
     }
     if (response.status === 401 || response.status === 403) {
       throw Object.assign(
@@ -1290,71 +1292,12 @@
     return tables;
   }
 
-  async function loadLegacySharedCatalog() {
-    const [u, i, t, l, mm, uml] = await Promise.all([
-      fetchAllRows(
-        'ege_units',
-        'id,unit_key,title,exam_bucket,parent_zid,official_fipi_url,items_total,shared_context,backup_json_path',
-        'exam_bucket'
-      ),
-      fetchAllRows(
-        'ege_items',
-        'id,unit_id,card_key,fipi_id,display_label,group_position,live_kes_code,item_text,item_tables,sort_order',
-        'sort_order'
-      ),
-      fetchAllRows(
-        'ege_topics',
-        'id,parent_id,level,slug,label,official_code,sort_order,is_active',
-        'sort_order'
-      ),
-      fetchAllRows(
-        'ege_unit_topics',
-        'unit_id,topic_id,source,confidence,is_primary,note',
-        'unit_id'
-      ),
-      fetchAllRows(
-        'ege_media',
-        'media_id,kind,extension,official_url,backup_path,backup_ready,integrity_status,content_type,note',
-        'media_id'
-      ),
-      fetchAllRows(
-        'ege_unit_media',
-        'unit_id,media_id,sort_order',
-        'unit_id'
-      )
-    ]);
-
-    return {
-      ege_units: u,
-      ege_items: i,
-      ege_topics: t,
-      ege_unit_topics: l,
-      ege_media: mm,
-      ege_unit_media: uml
-    };
-  }
-
   async function loadProtectedSharedCatalog() {
-    try {
-      const delivery = await requestEgeCatalogDelivery();
-
-      if (delivery.mode === 'legacy') {
-        console.info('EGE delivery manifest is LEGACY; using protected Supabase catalog.');
-        return await loadLegacySharedCatalog();
-      }
-
-      return await fetchEgeCatalogFromObjectStorage(delivery.meta);
-    } catch (error) {
-      if (error?.authFailure) throw error;
-
-      // During HYBRID rollout a technical Object Storage problem must not lock
-      // teachers out. The old protected Supabase catalog remains the fallback.
-      console.warn(
-        'EGE Object Storage catalog unavailable; protected Supabase fallback.',
-        error
-      );
-      return await loadLegacySharedCatalog();
+    const delivery = await requestEgeCatalogDelivery();
+    if (!delivery?.meta?.url) {
+      throw new Error('EGE Object Storage catalog URL is unavailable.');
     }
+    return await fetchEgeCatalogFromObjectStorage(delivery.meta);
   }
 
   async function loadDemoCatalog() {
@@ -1396,8 +1339,8 @@
   async function loadCatalog() {
     const principal = currentPrincipalKey();
 
-    // Six large/common tables come from Object Storage when HYBRID is enabled.
-    // Three small/live datasets stay in Supabase and are always current.
+    // Full/common catalog bytes come only from Yandex Object Storage.
+    // Supabase supplies only live metadata: statuses and manual topic overrides.
     const [shared, live] = await Promise.all([
       loadProtectedSharedCatalog(),
       Promise.all([
@@ -2275,8 +2218,104 @@
     activeBackupObjectUrls = [];
   }
 
+  // v0.6.5 — 89 links verified against LIVE FIPI as SERVICE-only.
+  // Pair-specific guard: hides only the exact unit↔media relations already removed
+  // from live Supabase, even while an older Object Storage catalog is cached.
+  const VERIFIED_SERVICE_MEDIA_LINKS = new Set([
+    "b496cf7d-fddf-5544-b9e7-0512120b93a0|fipi_455a22c7aa7b0889e940",
+    "625145bf-6a9a-51ad-9156-e2f89606bdf2|fipi_edb3c03d34a09ca45620",
+    "74cc5030-9edd-542c-a2c9-f2604694bdec|fipi_60f85f83194a68b5ac6e",
+    "9ae9be03-4189-5dd3-b8a9-dde61f7bc2ec|fipi_f71d5c43402a9d748487",
+    "b9b144f6-daee-59f3-b78c-184bc8d942e3|fipi_37934c155638d7808e51",
+    "c112021b-b824-5dde-a3ec-efdc03376899|fipi_10c5d23b770a3f034ebb",
+    "f6395d46-ac54-56fa-9fc0-6edb227fd942|fipi_aab8782e852f21700f0c",
+    "44d99969-050a-587d-8ab8-c9da86f63b57|fipi_74f1f74fbef72055c7b1",
+    "1cb2690d-ea7a-5359-9308-a72787166919|fipi_104437c1524c7655fe0a",
+    "c5ef74f2-7617-52d1-8f37-d658f876fe5b|fipi_728e89c711baea52ef54",
+    "81afd759-8cd1-5be1-ba35-3f35c52c4bb2|fipi_6f90faf3c3dd0f57b0a6",
+    "50565375-e16e-5934-a4ce-6691c2555804|fipi_ca202e19a16a72a01986",
+    "5f3f65a0-bb5f-5d08-81e0-7fca746d3b54|fipi_5d79a595fbaea2ef7d06",
+    "9a6a1893-5b64-5bce-b061-d427ddd218f8|fipi_4b0e376e5a518b64c6da",
+    "76c4839f-372e-5295-b68d-a05cc8f416b4|fipi_d1ec21413e339abaf29e",
+    "ab1c5057-81a6-576c-bb32-dac4ee2bf67e|fipi_699d75eec330fe496f8b",
+    "7ff8e6d2-0279-5815-b011-d818bfaa502f|fipi_27aaf18bde6add7537d2",
+    "fc573237-4aab-52f6-9294-dcb18a27dabf|fipi_abf44d59528f6dbc73c1",
+    "a0d81d50-752c-5aaf-8c9a-b4b7d59a2b3e|fipi_fc02ce7c96050940019e",
+    "810c17fd-cf80-54d2-b8a7-6f85ea320f1e|fipi_ce52fc90805e513bdb94",
+    "fc1061c5-af92-58d9-a6ff-6b8fe5027109|fipi_15dc9b6737ee2f4bd42b",
+    "1e71862b-7141-5b27-b130-d305293099d9|fipi_0ae1548a3dd90937bd6c",
+    "1160d274-4784-5ef9-857d-13b373efedba|fipi_c517b9746f3144a23dd4",
+    "7f251e44-fabf-5a59-8cef-1cbd8ac24d0e|fipi_0923aaf6ea3e1a1c2006",
+    "025fb583-ea43-5eef-99c2-edf36d7bf2c6|fipi_c1dc542782ca99556270",
+    "97722c24-f6b6-5c55-be77-7d015055d36a|fipi_a3c81b6a7cecdeaccc22",
+    "4fb01b4d-de4b-5201-8fa7-1fd58ea33389|fipi_16d66ed053a15494e0fa",
+    "c3c86dd1-7000-57d5-ba31-98be88c38dd5|fipi_908588ab6c28f2ed64d9",
+    "b412f225-66ed-5485-8201-dd2b64b70f15|fipi_bed7fd69db2e4f5a8341",
+    "c6f95762-9e03-5e99-bf7d-e5b64dbb885b|fipi_1f8751c5f5f71ea59c25",
+    "acf5529e-4133-5bdf-ac1a-a1ed702fbf3b|fipi_a54c246cacb477620ef5",
+    "8a4ceeea-23e9-541e-80a4-684f7a90499e|fipi_3c1cceedd36ecf24bda6",
+    "66361119-baa8-5bb8-b8b7-3287b257b302|fipi_b09b522e7a54b5b60b78",
+    "8ea58de9-bad8-556e-a1ce-bbc27dc20c9d|fipi_4dafdf12d0dcc4967d36",
+    "5cc425f2-1fd2-53b8-becc-3980ca0c6d1b|fipi_09836e1d024f5c9d04ff",
+    "26f4ce98-a613-5315-a960-b06d76aa8b52|fipi_e8dcf442d05db1383b8b",
+    "14859468-1ac1-56c0-bc7a-74dfa37f226d|fipi_de31dca2b0717f79ebd4",
+    "42437e28-1194-5043-af52-54d1f74182d3|fipi_58b81cbabbcd5e65e778",
+    "1d4006cc-0553-5dd4-8442-7c3083026c27|fipi_347c16910770685b2853",
+    "d07cd940-d4a1-5643-b473-d46d3f713b16|fipi_d20fd9c495f273d7dfb6",
+    "0a793f88-b328-5f51-ab38-1f84526886a6|fipi_33df8c34722d5de86546",
+    "4a0e26ed-ba01-5949-80ed-f7f5d6997d31|fipi_a1d6d859c7998d7aad56",
+    "70125c01-51b2-528c-9725-c88dc53527f1|fipi_686b69e1679e78f419bd",
+    "7068d5ce-af99-5883-8314-419b898141c0|fipi_44278c61913925ebbe2e",
+    "ba4cb884-d6ed-52ba-8602-be94a469ccbe|fipi_9bf7fb17481d0459c0d6",
+    "00a73d54-aa6d-54e9-8882-45e4871d05a0|fipi_9079170fe6c11134dc08",
+    "065c2aca-273f-557b-9619-9074600f143e|fipi_e82140d2373ee0f8d9ee",
+    "7f4ecfa5-dcc2-5de1-999d-204a1dde91d8|fipi_ea7bc6d40ea170124a4d",
+    "1ebcb6d9-14ab-583f-bb74-ff9c64bbeade|fipi_e9701720c95b4eaf2b6c",
+    "308a2fbd-6266-5866-b751-ceabea9e3215|fipi_8cbdf78fc78878799f7f",
+    "29c9d5f5-f902-59d9-b38d-fecb94f35573|fipi_c0a0c1f8fa783156ac5f",
+    "96992611-a69d-5d48-9915-698ab24e1046|fipi_f8de0e62e3f875c4bcd7",
+    "0e628270-367a-5bd2-9655-48dbb4fcf04d|fipi_e1cee698336d8636a671",
+    "68efce6f-1ee0-5c4d-bced-10cfb318c123|fipi_ff941f7aea0e1e3c7d87",
+    "c3f4e316-7ab4-5761-a5a7-f46dee0b500f|fipi_a5c7a6cc92e8a771fe76",
+    "93a2f36a-6521-5fa8-80f8-64d362fca4d8|fipi_97877e7a2aa47b28fb14",
+    "4aecf24d-d133-50d2-8ca1-a41073c35330|fipi_fb60663b4dbd54e5b3ef",
+    "cc7b56cb-5419-52df-a480-654d717b525b|fipi_112aafe1bbd6906c8f98",
+    "c2be566c-9dde-5644-878a-d9a3377558a5|fipi_9506e3a36b62eb0f140d",
+    "5d6b1e07-701d-5be3-a29d-ddc66a8dcf5d|fipi_559533accae5adfb869c",
+    "0f5652ee-6f50-5448-8581-59677698a641|fipi_9d4c94c91066c01470ec",
+    "b3545307-aed6-5184-b785-92642d05fb85|fipi_ecb2bb128606a7a6b6a3",
+    "c370a41f-d21d-5e64-8e1a-c9cd136570b2|fipi_6dc16fef0738a7eae185",
+    "70ff0ba0-50c5-53bb-b631-5c91ed9bac5f|fipi_59ab8b5a389702767f64",
+    "71a02a4c-cb67-5837-8ea9-9b576d158dcf|fipi_a3016c7a515b15056c38",
+    "e6414791-358e-529b-82f2-aa9a2d38c0f4|fipi_9bf217b34f69402fac0f",
+    "70660859-dcf8-56cc-a87f-497d0f0d5025|fipi_b90822f3e73ad77d4b4d",
+    "37c2f330-a0a0-5635-889e-a871d6d6bf79|fipi_275b24514272ff39dd89",
+    "40a8fed6-3449-518f-a5e9-5a3ba90a0618|fipi_d13d9f6694211952ea31",
+    "e75fa9dd-e8c3-5118-ad13-5e9253e59115|fipi_aea2b2565be55844b293",
+    "0d2cbe79-0f35-5ff0-839d-61824eb1fdf2|fipi_d6d923c12b01a6af8972",
+    "f9cc909c-3500-5ba0-9a8d-ac9da605e2d7|fipi_437c4daad7fa28940508",
+    "d83d4dad-0aac-587b-a1b3-74c74cd8755a|fipi_fa5f1c3f9f0537282c45",
+    "87dfbb1f-d280-5e99-8c08-66b19b9c4d80|fipi_beb262406f721c33d067",
+    "e8054ab6-6650-57ab-949a-3c65c1fcb038|fipi_94d0965dc5aa0f8398f6",
+    "459e2e4a-9fd1-5eea-8562-61d582bd92b3|fipi_c54aec5afd33b222c4cd",
+    "34004027-0826-5744-b789-eaa723d9c552|fipi_86a3dc8b8bd6aa5356a0",
+    "ea1f3d0d-7c27-5fcb-aaeb-3f1e5618a868|fipi_d8c12fa52d959994645f",
+    "5226d6af-d438-51ba-a395-a55250bf902a|fipi_ac925dedde23988b81bb",
+    "a8375af1-a8fd-506f-a6a1-fc29ebb826d5|fipi_54f1f922e7bd4baad7d3",
+    "eecb59ba-bfe2-558d-8856-4d46b855d10c|fipi_f366243f621c600ebe48",
+    "50289b68-5412-5417-8d6f-010974f95dee|fipi_3ad58fa5ed98d79d653a",
+    "8b2f42b5-1180-5400-8f68-b9d48e380ded|fipi_456671699ab21dc8f93f",
+    "d8bf191b-8930-5e4f-8aab-d4e33963a3b0|fipi_ceb02b20339d6cc10091",
+    "fbbf7f01-ac6c-575f-ac00-351f50db5652|fipi_7ed537ec5ecb45276158",
+    "d652f643-8638-5441-8d90-2746d2f208e6|fipi_0e56ce02cdf7bc23f49d",
+    "76df104a-a744-5f9c-ad84-179009d16ff1|fipi_90279d8e8925e3b1db75",
+    "71a01e9f-5863-58d7-a2bf-df18b828f90b|fipi_76f6cbebe7ed1f476c46",
+    "32b06d75-2660-5ecd-9e68-68827315a3ef|fipi_0b287894bed34ca4fed9"
+  ]);
+
   function backupMediaForUnit(unitId) {
     return (mediaLinksByUnit.get(unitId) || [])
+      .filter(link => !VERIFIED_SERVICE_MEDIA_LINKS.has(`${unitId}|${link.media_id}`))
       .map(link => ({ link, media: mediaById.get(link.media_id) }))
       .filter(x => x.media);
   }
@@ -2875,9 +2914,38 @@
       </section>`;
   }
 
+  function renderSpeakingAudio(unit) {
+    const rows = backupMediaForUnit(unit.id).filter(({ media }) => media?.kind === 'audio');
+    if (!rows.length) return '';
+
+    return `
+      <section class="backup-learning-section backup-media-section backup-speaking-media-section">
+        <span class="backup-block-label">АУДИО</span>
+        <div class="backup-media-grid">
+          ${rows.map(({ media }, idx) => {
+            const ready = Boolean(media.backup_ready && media.backup_path);
+            return `
+              <article class="backup-media-card" data-backup-media-card="${esc(media.media_id)}">
+                <div class="backup-media-head">
+                  <span class="backup-media-kind">Аудио${rows.length > 1 ? ` ${idx + 1}` : ''}</span>
+                  <span class="backup-media-status">${ready ? 'Яндекс-резерв' : 'недоступно'}</span>
+                </div>
+                <div class="backup-media-slot" data-backup-media-slot="${esc(media.media_id)}">
+                  ${ready
+                    ? `<div class="backup-loading"><div class="backup-spinner"></div>Загружаю…</div>`
+                    : `<div class="backup-media-error">Резервное аудио недоступно.</div>`}
+                </div>
+              </article>`;
+          }).join('')}
+        </div>
+      </section>`;
+  }
+
   function renderSpeakingTask(unit, model) {
     if (!speakingBucket(unit)) return '';
-    return `${renderSpeakingInstruction(unit, model)}${renderSpeakingMedia(unit, model)}`;
+    const instruction = renderSpeakingInstruction(unit, model);
+    const speaking3Audio = unit?.exam_bucket === 'speaking_3' ? renderSpeakingAudio(unit) : '';
+    return `${instruction}${speaking3Audio || renderSpeakingMedia(unit, model)}`;
   }
 
 
@@ -3509,35 +3577,119 @@
     `;
   }
 
-  async function gatewayFetchUnitJson(unitId) {
-    if (unitJsonCache.has(unitId)) return unitJsonCache.get(unitId);
+  let vocabularyCacheIndexPromise = null;
+
+  async function requestDirectEgeCache(kind, pageName = '') {
     const { data } = await supabaseClient.auth.getSession();
     const token = data?.session?.access_token;
-    if (!token) throw new Error('Сессия Supabase не найдена.');
-
-    const url = `${CONFIG.supabaseUrl.replace(/\/$/,'')}/functions/v1/ege-backup-gateway?unit_id=${encodeURIComponent(unitId)}&viewer=041`;
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`${response.status}: ${text || 'структурный резерв задания недоступен'}`);
+    if (!token) {
+      throw Object.assign(new Error('Сессия Supabase не найдена.'), { authFailure: true });
     }
-    const payload = await response.json();
-    unitJsonCache.set(unitId, payload);
-    return payload;
+
+    const params = new URLSearchParams({ kind });
+    if (pageName) params.set('name', pageName);
+
+    let response;
+    try {
+      response = await fetch(`${EGE_CACHE_DELIVERY_FUNCTION_URL}?${params.toString()}`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: configuredKey()
+        },
+        cache: 'no-store'
+      });
+    } catch (error) {
+      throw Object.assign(
+        new Error(`ege-cache-delivery network error: ${error?.message || error}`),
+        { technicalFailure: true }
+      );
+    }
+
+    let payload = null;
+    try { payload = await response.json(); } catch { payload = null; }
+
+    if (response.status === 401 || response.status === 403) {
+      throw Object.assign(
+        new Error(payload?.error || `ege-cache-delivery HTTP ${response.status}`),
+        { authFailure: true }
+      );
+    }
+    if (!response.ok || !payload?.cache?.url) {
+      throw Object.assign(
+        new Error(payload?.error || `ege-cache-delivery HTTP ${response.status}`),
+        { technicalFailure: true }
+      );
+    }
+
+    return payload.cache;
   }
 
-  async function legacyGatewayFetchMediaBlob(mediaId) {
-    const { data } = await supabaseClient.auth.getSession();
-    const token = data?.session?.access_token;
-    if (!token) throw new Error('Сессия Supabase не найдена.');
-
-    const url = `${CONFIG.supabaseUrl.replace(/\/$/,'')}/functions/v1/ege-backup-gateway?media_id=${encodeURIComponent(mediaId)}`;
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  async function fetchDirectCacheJson(kind, pageName = '') {
+    const signed = await requestDirectEgeCache(kind, pageName);
+    const response = await fetch(signed.url, { cache: 'no-store' });
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`${response.status}: ${text || 'резервный файл недоступен'}`);
+      throw new Error(`Yandex Object Storage cache HTTP ${response.status}`);
     }
-    return await response.blob();
+    return await response.json();
+  }
+
+  async function loadVocabularyCacheIndexDirect() {
+    if (!vocabularyCacheIndexPromise) {
+      vocabularyCacheIndexPromise = (async () => {
+        const index = await fetchDirectCacheJson('index');
+        if (!index || index.artifact !== 'ege_vocab_cache_index' || !index.groups || typeof index.groups !== 'object') {
+          throw new Error('Некорректный EGE vocabulary cache index.');
+        }
+        if (Number(index.target_groups_total || 0) !== 64 || Number(index.mapped_groups_total || 0) !== 64 || Number(index.missing_groups_total || 0) !== 0) {
+          throw new Error(
+            `EGE vocabulary cache incomplete: mapped=${Number(index.mapped_groups_total || 0)}/64, missing=${Number(index.missing_groups_total || 0)}`
+          );
+        }
+        return index;
+      })().catch(error => {
+        vocabularyCacheIndexPromise = null;
+        throw error;
+      });
+    }
+    return await vocabularyCacheIndexPromise;
+  }
+
+  async function fetchVocabularyUnitJsonDirect(unit) {
+    if (!unit?.id) throw new Error('EGE unit id is missing.');
+    if (unitJsonCache.has(unit.id)) return unitJsonCache.get(unit.id);
+
+    const parentZid = String(unit.parent_zid || '').trim().toUpperCase();
+    if (!/^[A-F0-9]{6}$/.test(parentZid)) {
+      throw new Error('Vocabulary parent_zid is missing or invalid.');
+    }
+
+    const index = await loadVocabularyCacheIndexDirect();
+    const route = index.groups?.[parentZid];
+    if (!route) throw new Error(`Vocabulary cache route not found for ${parentZid}.`);
+
+    const candidates = [route.primary_path, ...(Array.isArray(route.candidate_paths) ? route.candidate_paths : [])]
+      .filter(Boolean)
+      .map(value => String(value).replace(/\\/g, '/'));
+
+    const unique = [...new Set(candidates)];
+    let lastError = null;
+
+    for (const path of unique) {
+      const match = path.match(/(?:^|\/)page_(\d{4})\.json$/i);
+      if (!match) continue;
+      const pageName = `page_${match[1]}.json`;
+      try {
+        const payload = await fetchDirectCacheJson('page', pageName);
+        unitJsonCache.set(unit.id, payload);
+        console.info(`EGE vocabulary ${parentZid}: Object Storage direct ${pageName}`);
+        return payload;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error(`Vocabulary cache page unavailable for ${parentZid}.`);
   }
 
   async function requestDirectEgeMedia(mediaId) {
@@ -3606,30 +3758,9 @@
   }
 
   async function resolveBackupMediaSource(mediaId) {
-    try {
-      const direct = await requestDirectEgeMedia(mediaId);
-      console.info(`EGE media ${mediaId}: Object Storage direct`);
-      return direct;
-    } catch (error) {
-      if (error?.authFailure) throw error;
-
-      console.warn(
-        `EGE media ${mediaId}: Object Storage unavailable; legacy Yandex.Disk fallback`,
-        error
-      );
-
-      const blob = await legacyGatewayFetchMediaBlob(mediaId);
-      const objectUrl = URL.createObjectURL(blob);
-      activeBackupObjectUrls.push(objectUrl);
-
-      console.info(`EGE media ${mediaId}: legacy Yandex.Disk fallback`);
-      return {
-        url: objectUrl,
-        objectKey: '',
-        contentType: blob.type || '',
-        direct: false
-      };
-    }
+    const direct = await requestDirectEgeMedia(mediaId);
+    console.info(`EGE media ${mediaId}: Object Storage direct`);
+    return direct;
   }
 
   async function loadBackupMedia(mediaId) {
@@ -3640,7 +3771,7 @@
     try {
       const source = await resolveBackupMediaSource(mediaId);
       slot.dataset.loaded = '1';
-      slot.dataset.mediaSource = source.direct ? 'object-storage' : 'legacy-yandex-disk';
+      slot.dataset.mediaSource = 'object-storage';
 
       if (m.kind === 'image') {
         slot.innerHTML = `<img src="${esc(source.url)}" alt="Изображение задания">`;
@@ -3808,7 +3939,7 @@
     let unitJson = null;
     let unitJsonError = null;
     if (unit?.exam_bucket === 'vocabulary_30_36' && unit.backup_json_path) {
-      try { unitJson = await gatewayFetchUnitJson(unit.id); }
+      try { unitJson = await fetchVocabularyUnitJsonDirect(unit); }
       catch (error) {
         unitJsonError = error;
         console.warn('Unit JSON backup unavailable:', error);
@@ -3829,7 +3960,7 @@
         || `${renderInstructionSection(model)}${renderMediaCards(unit)}${renderContextSection(unit, model)}`;
     } else {
       const vocabNotice = unit?.exam_bucket === 'vocabulary_30_36' && !model.vocabularyRecovered
-        ? `<section class="backup-learning-section backup-recovery-note"><span class="backup-block-label">МАТЕРИАЛ ЗАДАНИЯ</span><div class="backup-readable-text">Основной текст этой группы пока не найден в подключённом структурном резерве. Варианты ответов сохранены; проверьте обновление ege-backup-gateway v0.1.6.</div></section>`
+        ? `<section class="backup-learning-section backup-recovery-note"><span class="backup-block-label">МАТЕРИАЛ ЗАДАНИЯ</span><div class="backup-readable-text">Основной текст этой группы пока не найден в прямом Яндекс-резерве. Проверьте загрузку ege/cache в Object Storage.</div></section>`
         : '';
       el.backupTaskBody.innerHTML = `
         ${renderInstructionSection(model)}
