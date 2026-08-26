@@ -4,7 +4,7 @@
   const CONFIG = window.EGE_CONFIG || window.OGE_CONFIG || {};
   const PAGE_SIZE = 1000;
 
-  // v0.6.6 — STRICT NO-PROXY delivery.
+  // v0.6.7 — STRICT NO-PROXY + visual/media/status repair.
   // Supabase is ONLY the customs layer: Auth/access, statuses, metadata and short-lived signed URLs.
   // Catalog, media and vocabulary cache bytes are fetched DIRECTLY by the browser from Yandex Object Storage.
   const EGE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-delivery`;
@@ -2382,10 +2382,15 @@
     }
 
     if (unit?.exam_bucket === 'reading_11') {
-      // The bank stores a generic lead + the real instruction + passage in one string.
-      // Keep only the complete instruction here; the passage is rendered separately.
-      const m = text.match(/^(?:Установите соответствие и впишите ответ\.\s*)?(Прочитайте текст и заполните пропуски A[–-]F.*?Занесите цифры, обозначающие соответствующие части предложений, в таблицу\.)\s*/isu);
-      if (m) return { instruction: backupTextClean(m[1]), body: backupTextClean(text.slice(m[0].length)) };
+      // FIPI parser variants sometimes lose the dash in “A–F” and “1–7” and store them as “A F” / “1 7”.
+      // Accept both shapes, then restore the human-readable official notation in the viewer.
+      const m = text.match(/^(?:Установите соответствие и впишите ответ\.\s*)?(Прочитайте текст и заполните пропуски A\s*(?:[–—-]\s*)?F.*?частями предложений,\s*обозначенными цифрами 1\s*(?:[–—-]\s*)?7.*?Занесите цифры, обозначающие соответствующие части предложений, в таблицу\.)\s*/isu);
+      if (m) {
+        const instruction = backupTextClean(m[1])
+          .replace(/A\s*(?:[–—-]\s*)?F/gu, 'A–F')
+          .replace(/1\s*(?:[–—-]\s*)?7/gu, '1–7');
+        return { instruction, body: backupTextClean(text.slice(m[0].length)) };
+      }
     }
 
     const leadPatterns = [
@@ -2905,8 +2910,8 @@
                 </div>
                 <div class="backup-media-slot" data-backup-media-slot="${esc(media.media_id)}">
                   ${ready
-                    ? `<div class="backup-loading"><div class="backup-spinner"></div>Загружаю…</div>`
-                    : `<div class="backup-media-error">Резервное изображение недоступно.</div>`}
+                    ? `<div class="backup-loading"><div class="backup-spinner"></div>Получаю защищённую ссылку…</div>`
+                    : `<div class="backup-media-error">Официальный файл изображения ФИПИ повреждён или пуст в исходнике. Текст задания сохранён; используйте кнопку «Оригинал ФИПИ» для контрольной проверки.</div>`}
                 </div>
               </article>`;
           }).join('')}
@@ -3543,30 +3548,43 @@
     `;
   }
 
+  function visibleMediaRows(unit) {
+    let rows = backupMediaForUnit(unit.id);
+
+    // Reading 11 is a text matching task. The one historical GIF linked to 01CE56
+    // is a known failed/tiny legacy FIPI asset, not learning content for the task.
+    if (unit?.exam_bucket === 'reading_11') return [];
+
+    // Listening pages contain a tiny FIPI “listen” companion GIF beside the real MP3.
+    // In Navigator the native HTML audio player replaces that service button.
+    if (['listening_1', 'listening_2', 'listening_3_9'].includes(unit?.exam_bucket)) {
+      const audioRows = rows.filter(({ media }) => media?.kind === 'audio');
+      if (audioRows.length) rows = audioRows;
+    }
+
+    return rows;
+  }
+
   function renderMediaCards(unit) {
-    const rows = backupMediaForUnit(unit.id);
+    const rows = visibleMediaRows(unit);
     if (!rows.length) return '';
-    const hasAudio = rows.some(({ media }) => media?.kind === 'audio');
 
     return `
       <section class="backup-learning-section backup-media-section">
         <span class="backup-block-label">МЕДИА К ЗАДАНИЮ</span>
         <div class="backup-media-grid">
           ${rows.map(({ media }, idx) => {
-            const ready = Boolean(media.backup_ready && media.backup_path);
+            const ready = Boolean(media.backup_ready && media.backup_path && media.integrity_status === 'verified');
             const kind = media.kind || 'other';
-            // Listening tasks in FIPI often contain a purely technical “Прослушать аудиозапись” image.
-            // Keep it on screen for fidelity, but mark it so eco-print can omit it.
-            const technicalAudioPrompt = hasAudio && kind === 'image';
             return `
-              <article class="backup-media-card ${kind === 'image' ? 'image-card' : ''} ${technicalAudioPrompt ? 'backup-technical-audio-image' : ''}" data-backup-media-card="${esc(media.media_id)}">
+              <article class="backup-media-card ${kind === 'image' ? 'image-card' : ''}" data-backup-media-card="${esc(media.media_id)}">
                 <div class="backup-media-head">
                   <span class="backup-media-kind">${esc(kind === 'audio' ? 'Аудио' : kind === 'image' ? 'Изображение' : kind === 'video' ? 'Видео' : 'Media')} ${idx + 1}</span>
                   <span class="backup-media-status">${ready ? 'Яндекс-резерв' : 'недоступно'}</span>
                 </div>
                 <div class="backup-media-slot" data-backup-media-slot="${esc(media.media_id)}">
                   ${ready
-                    ? `<div class="backup-loading"><div class="backup-spinner"></div>Загружаю…</div>`
+                    ? `<div class="backup-loading"><div class="backup-spinner"></div>Получаю защищённую ссылку…</div>`
                     : `<div class="backup-media-error">Резервный файл недоступен. Текст задания сохранён.</div>`}
                 </div>
               </article>
@@ -3699,6 +3717,8 @@
       throw Object.assign(new Error('Сессия Supabase не найдена.'), { authFailure: true });
     }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     let response;
     try {
       response = await fetch(
@@ -3709,14 +3729,17 @@
             Authorization: `Bearer ${token}`,
             apikey: configuredKey()
           },
-          cache: 'no-store'
+          cache: 'no-store',
+          signal: controller.signal
         }
       );
     } catch (error) {
-      throw Object.assign(
-        new Error(`ege-media-delivery network error: ${error?.message || error}`),
-        { technicalFailure: true }
-      );
+      const label = error?.name === 'AbortError'
+        ? 'ege-media-delivery timeout (15 s)'
+        : `ege-media-delivery network error: ${error?.message || error}`;
+      throw Object.assign(new Error(label), { technicalFailure: true });
+    } finally {
+      clearTimeout(timeout);
     }
 
     let payload = null;
@@ -3736,19 +3759,9 @@
       );
     }
 
-    // Tiny Range probe confirms that the signed URL and Object Storage CORS are
-    // actually usable before the viewer adopts the direct URL.
-    const probe = await fetch(payload.media.url, {
-      headers: { Range: 'bytes=0-0' },
-      cache: 'no-store'
-    });
-    if (!(probe.status === 206 || probe.status === 200)) {
-      throw Object.assign(
-        new Error(`Object Storage media probe HTTP ${probe.status}`),
-        { technicalFailure: true }
-      );
-    }
-
+    // IMPORTANT: do NOT browser-fetch/probe the object here.
+    // <img>/<audio>/<video> receive the signed Yandex URL directly. This avoids
+    // Range/CORS preflight stalls and keeps all content bytes on the Yandex -> browser path.
     return {
       url: payload.media.url,
       objectKey: payload.media.object_key || '',
@@ -3782,14 +3795,23 @@
       } else {
         slot.innerHTML = `<a class="button secondary wide backup-media-open" href="${esc(source.url)}" target="_blank" rel="noopener noreferrer">Открыть media</a><div class="backup-print-media-note">Дополнительный media-файл доступен в электронной версии Navigator.</div>`;
       }
+
+      const mediaElement = slot.querySelector('img, audio, video');
+      if (mediaElement) {
+        mediaElement.addEventListener('error', () => {
+          slot.innerHTML = `<div class="backup-media-error">Яндекс-объект не открылся по временной ссылке. Обновите страницу; если ошибка повторится, пришлите FIPI ID задания.</div>`;
+        }, { once: true });
+      }
     } catch (error) {
       console.error('Backup media load failed:', error);
-      slot.innerHTML = `<div class="backup-media-error">Не удалось загрузить media из защищённого резерва.<br>${esc(error?.message || error)}</div>`;
+      slot.innerHTML = `<div class="backup-media-error">Не удалось получить прямую ссылку на media из Яндекс Object Storage.<br>${esc(error?.message || error)}</div>`;
     }
   }
 
   async function loadAllBackupMedia(unit) {
-    const rows = backupMediaForUnit(unit.id).filter(({ media }) => media.backup_ready && media.backup_path);
+    const rows = visibleMediaRows(unit).filter(({ media }) =>
+      media.backup_ready && media.backup_path && media.integrity_status === 'verified'
+    );
     await Promise.allSettled(rows.map(({ media }) => loadBackupMedia(media.media_id)));
   }
 
@@ -4009,17 +4031,12 @@
 
     if (!principal) return;
 
-    const now = new Date().toISOString();
-    const payload = arr.map(item => ({
-      principal_key: principal,
-      item_id: item.id,
-      status,
-      updated_at: now,
-    }));
-
-    const { error } = await supabaseClient
-      .from('ege_task_status')
-      .upsert(payload, { onConflict: 'principal_key,item_id' });
+    // Tiny metadata write only. Supabase remains the customs/status layer;
+    // no catalog/media/cache bytes pass through this RPC.
+    const { error } = await supabaseClient.rpc('ege_set_unit_status', {
+      p_unit_id: unit.id,
+      p_status: status
+    });
 
     if (error) {
       console.error('Status save failed:', error);
@@ -4028,7 +4045,7 @@
         else itemStatus.set(itemId, oldStatus);
       }
       render(false);
-      showInfo('Не удалось сохранить статус', 'Статус карточки не записался в Supabase. Обновите страницу и попробуйте ещё раз.', 'СТАТУС');
+      showInfo('Не удалось сохранить статус', `Supabase вернул: ${error.message || 'неизвестная ошибка'}`, 'СТАТУС');
     }
   }
 
