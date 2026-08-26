@@ -2366,6 +2366,19 @@
     return /^(?:Прочитайте|Прослушайте|Вы услышите|Установите|Определите|Выберите|Впишите|Запишите|Дайте|В заданиях|Выполните|Imagine\b|Task\s*\d+\b|You (?:have|are|will)\b)/iu.test(t);
   }
 
+  function isReading11Unit(unit) {
+    const bucket = String(unit?.exam_bucket || '').trim().toLowerCase();
+    if (bucket === 'reading_11') return true;
+    const title = backupTextClean(unit?.title || '');
+    return /(?:Чтение|Reading)\s*(?:·|-)?\s*(?:задание|task)?\s*11(?:\D|$)/iu.test(title);
+  }
+
+  function normalizeReading11Instruction(value) {
+    return backupTextClean(value)
+      .replace(/A\s*(?:[–—-]\s*)?F(?=\s|[.,;:]|$)/gu, 'A–F')
+      .replace(/1\s*(?:[–—-]\s*)?7(?=\s|[.,;:]|$)/gu, '1–7');
+  }
+
   function splitItemInstruction(item, unit) {
     let text = backupTextClean(item?.item_text || '');
     text = text.replace(/^Задание\s*№\s*\d+\.\s*/iu, '').trim();
@@ -2381,15 +2394,21 @@
       if (m) return { instruction: backupTextClean(m[1]), body: backupTextClean(text.slice(m[0].length)) };
     }
 
-    if (unit?.exam_bucket === 'reading_11') {
-      // FIPI parser variants sometimes lose the dash in “A–F” and “1–7” and store them as “A F” / “1 7”.
-      // Accept both shapes, then restore the human-readable official notation in the viewer.
-      const m = text.match(/^(?:Установите соответствие и впишите ответ\.\s*)?(Прочитайте текст и заполните пропуски A\s*(?:[–—-]\s*)?F.*?частями предложений,\s*обозначенными цифрами 1\s*(?:[–—-]\s*)?7.*?Занесите цифры, обозначающие соответствующие части предложений, в таблицу\.)\s*/isu);
-      if (m) {
-        const instruction = backupTextClean(m[1])
-          .replace(/A\s*(?:[–—-]\s*)?F/gu, 'A–F')
-          .replace(/1\s*(?:[–—-]\s*)?7/gu, '1–7');
-        return { instruction, body: backupTextClean(text.slice(m[0].length)) };
+    if (isReading11Unit(unit)) {
+      // Reading 11 has two common parser shapes:
+      // A–F / 1–7, or the dashless A F / 1 7.
+      // Ignore the short generic lead “Установите соответствие...”
+      // and keep the full official two-sentence instruction together.
+      const startIndex = text.search(/Прочитайте\s+текст\s+и\s+заполните\s+пропуски/iu);
+      if (startIndex >= 0) {
+        const tail = text.slice(startIndex);
+        const endMatch = /Занесите\s+цифры,\s*обозначающие\s+соответствующие\s+части\s+предложений,\s*в\s+таблицу\./iu.exec(tail);
+        if (endMatch) {
+          const endIndex = startIndex + (endMatch.index || 0) + endMatch[0].length;
+          const instruction = normalizeReading11Instruction(text.slice(startIndex, endIndex));
+          const body = backupTextClean(text.slice(endIndex));
+          return { instruction, body };
+        }
       }
     }
 
@@ -3111,7 +3130,15 @@
 
   function cleanReading11Body(body, tables) {
     const choice = choiceModelFromTables(tables);
-    let text = stripOptionsFromBody(body, choice?.options || []);
+    let text = backupTextClean(body);
+
+    const instructionStart = text.search(/Прочитайте\s+текст\s+и\s+заполните\s+пропуски/iu);
+    if (instructionStart === 0) {
+      const endMatch = /Занесите\s+цифры,\s*обозначающие\s+соответствующие\s+части\s+предложений,\s*в\s+таблицу\./iu.exec(text);
+      if (endMatch) text = backupTextClean(text.slice((endMatch.index || 0) + endMatch[0].length));
+    }
+
+    text = stripOptionsFromBody(text, choice?.options || []);
     text = stripAnswerMatrixTail(text);
     return backupTextClean(text);
   }
@@ -3553,7 +3580,7 @@
 
     // Reading 11 is a text matching task. The one historical GIF linked to 01CE56
     // is a known failed/tiny legacy FIPI asset, not learning content for the task.
-    if (unit?.exam_bucket === 'reading_11') return [];
+    if (isReading11Unit(unit)) return [];
 
     // Listening pages contain a tiny FIPI “listen” companion GIF beside the real MP3.
     // In Navigator the native HTML audio player replaces that service button.
