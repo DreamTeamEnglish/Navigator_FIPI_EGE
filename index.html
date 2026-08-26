@@ -9,6 +9,33 @@
   <meta name="color-scheme" content="dark light">
   <title>EGE Navigator · FIPI · DreamTeam English</title>
   <link rel="stylesheet" href="styles.css?v=062-compact-ui-1">
+
+  <style id="oldNewFormatStyles">
+    .format-generation-badge{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width:38px;
+      height:21px;
+      padding:0 8px;
+      border-radius:999px;
+      border:1px solid currentColor;
+      font:800 9px/1 Arial,sans-serif;
+      letter-spacing:.09em;
+      vertical-align:middle;
+      white-space:nowrap;
+    }
+    .format-generation-badge.format-new{
+      color:#bfe8d9;
+      background:rgba(38,139,105,.14);
+    }
+    .format-generation-badge.format-old{
+      color:#e3c879;
+      background:rgba(217,175,74,.10);
+      opacity:.92;
+    }
+  </style>
+
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -94,12 +121,14 @@
           <select id="bucketSelect" aria-label="Раздел ЕГЭ"></select>
         </label>
         <label>
-          <span class="filter-caption">Статус</span>
-          <select id="statusSelect" aria-label="Статус">
-            <option value="all">Статус: все</option>
-            <option value="new">Статус: новые</option>
-            <option value="viewed">Статус: просмотренные</option>
-            <option value="used">Статус: использованные</option>
+          <span class="filter-caption">Статус / формат</span>
+          <select id="statusSelect" aria-label="Статус или формат задания">
+            <option value="all">Все статусы и форматы</option>
+            <option value="new">○ Новые / не просмотрены</option>
+            <option value="viewed">◉ Просмотренные</option>
+            <option value="used">★ Использованные</option>
+            <option value="format_new">NEW · новый формат</option>
+            <option value="format_old">OLD · старый формат</option>
           </select>
         </label>
         <label class="search-label">
@@ -506,6 +535,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=071-speaking4-all-formats-1"></script>
+  <script src="app.js?v=072-old-new-format-1"></script>
 </body>
 </html>

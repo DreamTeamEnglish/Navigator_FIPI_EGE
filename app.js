@@ -4,9 +4,9 @@
   const CONFIG = window.EGE_CONFIG || window.OGE_CONFIG || {};
   const PAGE_SIZE = 1000;
 
-  // v0.7.1 — SPEAKING 4 ALL FIPI FORMATS FIX. STRICT NO-PROXY preserved.
-  window.__EGE_FRONTEND_BUILD__ = '0.7.1-speaking4-fix';
-  console.info('EGE Navigator frontend build: 0.7.1-speaking4-fix');
+  // v0.7.2 — OLD/NEW FORMAT BADGES + FILTER. STRICT NO-PROXY preserved.
+  window.__EGE_FRONTEND_BUILD__ = '0.7.2-old-new';
+  console.info('EGE Navigator frontend build: 0.7.2-old-new');
   // Supabase is ONLY the customs layer: Auth/access, statuses, metadata and short-lived signed URLs.
   // Catalog, media and vocabulary cache bytes are fetched DIRECTLY by the browser from Yandex Object Storage.
   const EGE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-delivery`;
@@ -59,6 +59,16 @@
     viewed: { label: 'Просмотрено', icon: '◉' },
     used: { label: 'Использовано', icon: '★' },
   };
+
+  const FORMAT_META = {
+    new: { label: 'NEW', title: 'Новый формат ЕГЭ' },
+    old: { label: 'OLD', title: 'Старый формат ЕГЭ' },
+  };
+
+  // Generation classification is intentionally conservative:
+  // no badge is better than a wrong OLD/NEW badge.
+  // OLD/NEW is NOT a user progress status and is never written to Supabase.
+  const VOCAB_FORMAT_CACHE_KEY = 'ege-vocab-format-generation-v072';
 
   let supabaseClient = null;
   let currentUser = null;
@@ -1564,6 +1574,163 @@
     return topMatch && subMatch;
   }
 
+  function unitFormatText(unit) {
+    return (itemsByUnit.get(unit.id) || [])
+      .map(item => String(item?.item_text || ''))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function loadCachedVocabFormats() {
+    try {
+      const raw = localStorage.getItem(VOCAB_FORMAT_CACHE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveCachedVocabFormat(parentZid, generation) {
+    const key = String(parentZid || '').trim().toUpperCase();
+    if (!/^[A-F0-9]{6}$/.test(key) || !['old','new'].includes(generation)) return;
+    try {
+      const map = loadCachedVocabFormats();
+      if (map[key] === generation) return;
+      map[key] = generation;
+      localStorage.setItem(VOCAB_FORMAT_CACHE_KEY, JSON.stringify(map));
+    } catch {}
+  }
+
+  function flattenBackupStrings(value, out = []) {
+    if (value == null) return out;
+    if (typeof value === 'string' || typeof value === 'number') {
+      out.push(String(value));
+      return out;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) flattenBackupStrings(item, out);
+      return out;
+    }
+    if (typeof value === 'object') {
+      for (const item of Object.values(value)) flattenBackupStrings(item, out);
+    }
+    return out;
+  }
+
+  function vocabularyFormatFromPayload(payload) {
+    if (!payload) return null;
+    const text = flattenBackupStrings(payload, []).join(' ').replace(/\s+/g, ' ');
+    if (/номерами\s+30\s*[–—-]\s*36\b/iu.test(text) ||
+        /заданиям\s+30\s*[–—-]\s*36\b/iu.test(text)) return 'new';
+    if (/номерами\s+32\s*[–—-]\s*38\b/iu.test(text) ||
+        /заданиям\s+32\s*[–—-]\s*38\b/iu.test(text)) return 'old';
+    return null;
+  }
+
+  function vocabularyCachedFormat(unit) {
+    const parentZid = String(unit?.parent_zid || '').trim().toUpperCase();
+    if (!parentZid) return null;
+
+    const payload = unitJsonCache.get(unit.id);
+    const fromPayload = vocabularyFormatFromPayload(payload);
+    if (fromPayload) {
+      saveCachedVocabFormat(parentZid, fromPayload);
+      return fromPayload;
+    }
+
+    const saved = loadCachedVocabFormats();
+    return saved[parentZid] === 'new' || saved[parentZid] === 'old'
+      ? saved[parentZid]
+      : null;
+  }
+
+  function unitFormatGeneration(unit) {
+    const bucket = String(unit?.exam_bucket || '');
+    const arr = itemsByUnit.get(unit.id) || [];
+    const text = unitFormatText(unit);
+
+    // Written/grammar block: old exam had 1–40, new exam has 1–38.
+    // The shifted group sizes are reliable even though Navigator normalizes bucket names.
+    if (bucket === 'grammar_19_24') {
+      if (arr.length === 6) return 'new'; // 19–24
+      if (arr.length === 7) return 'old'; // old 19–25
+      return null;
+    }
+
+    if (bucket === 'wordformation_25_29') {
+      if (arr.length === 5) return 'new'; // 25–29
+      if (arr.length === 6) return 'old'; // old 26–31
+      return null;
+    }
+
+    if (bucket === 'vocabulary_30_36') {
+      // Exact source wording is available in the structured cache:
+      // NEW = 30–36, OLD = 32–38.
+      // We deliberately do not guess before that source page has been seen.
+      return vocabularyCachedFormat(unit);
+    }
+
+    if (bucket === 'writing_37') {
+      if (/You have received an email message from\b/iu.test(text)) return 'new';
+      if (/You have received a letter from\b/iu.test(text)) return 'old';
+      if (/Comment on (?:one of )?the following statements?\b/iu.test(text)) return 'old';
+      return null;
+    }
+
+    if (bucket === 'writing_38') {
+      if (/\bImagine that you are doing a project\b/iu.test(text)) return 'new';
+      if (/Comment on (?:one of )?the following statements?\b/iu.test(text)) return 'old';
+      return null;
+    }
+
+    // Speaking 2 changed from five direct questions to four.
+    if (bucket === 'speaking_2') {
+      if (/\bask four (?:direct )?questions\b/iu.test(text)) return 'new';
+      if (/\bask five (?:direct )?questions\b/iu.test(text)) return 'old';
+      return null;
+    }
+
+    // User-provided rule: interview + audio = NEW, photo album = OLD.
+    // Text rule also works in DEMO, where protected media arrays are intentionally absent.
+    if (bucket === 'speaking_3') {
+      if (/\bYou are going to give an interview\b/iu.test(text)) return 'new';
+      if (/\bThese are photos from your photo album\b/iu.test(text)) return 'old';
+
+      const kinds = (mediaLinksByUnit.get(unit.id) || [])
+        .map(link => mediaById.get(link.media_id)?.kind)
+        .filter(Boolean);
+      if (kinds.includes('audio')) return 'new';
+      if (kinds.includes('image')) return 'old';
+      return null;
+    }
+
+    // Speaking 4: modern project format = NEW; classic compare/contrast = OLD.
+    if (bucket === 'speaking_4') {
+      if (/\bStudy the two photographs\b/iu.test(text) ||
+          /\bcompare and contrast the photographs\b/iu.test(text)) return 'old';
+      if (/\bdoing a (?:school )?project\b/iu.test(text)) return 'new';
+      return null;
+    }
+
+    // Listening, Reading, Speaking 1: no label until a reliable generation marker exists.
+    return null;
+  }
+
+  function unitFormatBadge(unit) {
+    const generation = unitFormatGeneration(unit);
+    const meta = FORMAT_META[generation];
+    if (!meta) return '';
+    return `<span class="format-generation-badge format-${generation}" title="${esc(meta.title)}">${esc(meta.label)}</span>`;
+  }
+
+  function statusOrFormatFilterLabel(value) {
+    if (value === 'format_new') return 'Формат: NEW';
+    if (value === 'format_old') return 'Формат: OLD';
+    return STATUS_META[value]?.label || value;
+  }
+
   function unitSearchText(unit) {
     const arr = itemsByUnit.get(unit.id) || [];
     const topicLabels = unitTopicRecords(unit.id).flatMap(({ topic }) => [
@@ -1588,7 +1755,9 @@
     return units.filter(unit => {
       if (bucketId !== 'all' && unit.exam_bucket !== bucketId) return false;
       if (!topicMatches(unit, topicId, subtopicId)) return false;
-      if (status !== 'all' && unitStatus(unit) !== status) return false;
+      if (status === 'format_new' && unitFormatGeneration(unit) !== 'new') return false;
+      if (status === 'format_old' && unitFormatGeneration(unit) !== 'old') return false;
+      if (!status.startsWith('format_') && status !== 'all' && unitStatus(unit) !== status) return false;
       if (query && !unitSearchText(unit).includes(query)) return false;
       return true;
     });
@@ -1681,6 +1850,7 @@
         <div class="card-top">
           <span class="fipi-ref" title="${esc(unit.unit_key)}">${esc(unitReference(unit))}</span>
           <span class="card-top-actions">
+            ${unitFormatBadge(unit)}
             ${hasTopicOverride(unit.id) ? '<span class="manual-override-marker" title="Есть ручная тематическая правка">ручная</span>' : ''}
             ${arr.length > 1 ? `<span class="unit-count-badge">${esc(countLabel(arr.length))}</span>` : ''}
             ${currentAccess?.role === 'admin'
@@ -1718,7 +1888,7 @@
     else parts.push('Все темы');
     if (sub) parts.push(sub.label);
     if (bucketId !== 'all') parts.push(BUCKET_MAP.get(bucketId)?.short || bucketId);
-    if (status !== 'all') parts.push(STATUS_META[status]?.label || status);
+    if (status !== 'all') parts.push(statusOrFormatFilterLabel(status));
     if (el.searchInput.value.trim()) parts.push(`«${el.searchInput.value.trim()}»`);
     return parts.join(' · ');
   }
@@ -3841,6 +4011,8 @@
       try {
         const payload = await fetchDirectCacheJson('page', pageName);
         unitJsonCache.set(unit.id, payload);
+        const generation = vocabularyFormatFromPayload(payload);
+        if (generation) saveCachedVocabFormat(parentZid, generation);
         console.info(`EGE vocabulary ${parentZid}: Object Storage direct ${pageName}`);
         return payload;
       } catch (error) {
