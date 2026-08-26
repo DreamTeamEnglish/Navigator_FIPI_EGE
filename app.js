@@ -4,9 +4,9 @@
   const CONFIG = window.EGE_CONFIG || window.OGE_CONFIG || {};
   const PAGE_SIZE = 1000;
 
-  // v0.6.9 — FORCE FRONTEND SYNC. STRICT NO-PROXY + visual/media/status repair.
-  window.__EGE_FRONTEND_BUILD__ = '0.6.9-force-sync';
-  console.info('EGE Navigator frontend build: 0.6.9-force-sync');
+  // v0.7.0 — WRITING 37/38 STRUCTURE FIX. STRICT NO-PROXY preserved.
+  window.__EGE_FRONTEND_BUILD__ = '0.7.0-writing-fix';
+  console.info('EGE Navigator frontend build: 0.7.0-writing-fix');
   // Supabase is ONLY the customs layer: Auth/access, statuses, metadata and short-lived signed URLs.
   // Catalog, media and vocabulary cache bytes are fetched DIRECTLY by the browser from Yandex Object Storage.
   const EGE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-delivery`;
@@ -3218,6 +3218,45 @@
       .trim();
   }
 
+  function writing37EmailParts(item, remainder) {
+    const singleCells = tableLeafRows(item?.item_tables || [])
+      .filter(row => row.length === 1)
+      .map(row => backupTextClean(row[0]))
+      .filter(Boolean);
+
+    const unique = [...new Set(singleCells)];
+    const from = unique.find(x => /^(?:From:|FroTAG_HERE\b)/iu.test(x));
+    const to = unique.find(x => /^To:/iu.test(x));
+    const subject = unique.find(x => /^Subject:/iu.test(x));
+    const quote = unique.find(x => /^(?:…|\.{3})/u.test(x));
+
+    if (from || to || subject || quote) {
+      const meta = [from, to, subject]
+        .filter(Boolean)
+        .map(x => x.replace(/^FroTAG_HERE\b/iu, 'From:'));
+      return {
+        meta,
+        quote: backupTextClean(quote || remainder)
+      };
+    }
+
+    const text = backupTextClean(remainder);
+    const ellipsis = text.search(/(?:…|\.{3})/u);
+    if (ellipsis >= 0) {
+      const metaText = backupTextClean(text.slice(0, ellipsis));
+      const meta = metaText
+        .split(/\s+(?=(?:To|Subject):)/u)
+        .map(backupTextClean)
+        .filter(Boolean)
+        .map(x => x.replace(/^FroTAG_HERE\b/iu, 'From:'));
+      return {
+        meta,
+        quote: backupTextClean(text.slice(ellipsis))
+      };
+    }
+    return { meta: [], quote: text };
+  }
+
   function writing37Model(model) {
     const row = model?.items?.[0];
     let text = stripGenericExpandedAnswerLead(row?.body || row?.item?.item_text || model?.context?.[0] || '');
@@ -3226,7 +3265,7 @@
     const letterStart = text.search(/You have received (?:an email message|a letter) from/iu);
     const start = letterStart >= 0 ? letterStart : 0;
     const afterStart = text.slice(start);
-    const writeRelative = afterStart.search(/\bWrite (?:a letter|an email|a message) to\b/iu);
+    const writeRelative = afterStart.search(/\bWrite\s+(?:a|an)\s+(?:letter|email|message)\s+to\b/iu);
     const writeStart = writeRelative >= 0 ? start + writeRelative : -1;
 
     const letter = backupTextClean(text.slice(start, writeStart >= 0 ? writeStart : text.length));
@@ -3236,23 +3275,36 @@
     }
 
     let letterLead = '';
+    let letterMeta = [];
     let letterQuote = letter;
-    const leadMatch = letter.match(/^(You have received (?:an email message|a letter) from[\s\S]*?who writes:)\s*([\s\S]*)$/iu);
-    if (leadMatch) {
-      letterLead = backupTextClean(leadMatch[1]);
-      letterQuote = backupTextClean(leadMatch[2]);
+
+    const oldLetter = letter.match(/^(You have received a letter from[\s\S]*?who writes:)\s*([\s\S]*)$/iu);
+    if (oldLetter) {
+      letterLead = backupTextClean(oldLetter[1]);
+      letterQuote = backupTextClean(oldLetter[2]);
+    } else {
+      const email = letter.match(/^(You have received an email message from[^:]+:)\s*([\s\S]*)$/iu);
+      if (email) {
+        letterLead = backupTextClean(email[1]);
+        const parsed = writing37EmailParts(row?.item, email[2]);
+        letterMeta = parsed.meta;
+        letterQuote = parsed.quote;
+      }
     }
 
     const words = instruction.match(/Write\s+(\d+)\s*[–-]\s*(\d+)\s+words/iu)
       || text.match(/Write\s+(\d+)\s*[–-]\s*(\d+)\s+words/iu);
     const answerTitle = words ? `ВАШ ОТВЕТ (${words[1]}–${words[2]} СЛОВ)` : 'ВАШ ОТВЕТ';
-    return { instruction, letter, letterLead, letterQuote, answerTitle };
+    return { instruction, letter, letterLead, letterMeta, letterQuote, answerTitle };
   }
 
   function writing37InstructionHtml(value) {
     const text = backupTextClean(value);
     if (!text) return '';
-    const inLetter = text.search(/\bIn your (?:letter|email|message)\b/iu);
+
+    const marker = /\bIn your (letter|email|message)\b/iu.exec(text);
+    const inLetter = marker?.index ?? -1;
+    const markerLabel = marker ? `In your ${marker[1]}:` : 'In your letter:';
     const wordCount = text.search(/\bWrite\s+\d+\s*[–-]\s*\d+\s+words\.?/iu);
     const remember = text.search(/\bRemember the rules of (?:letter|email) writing\.?/iu);
 
@@ -3261,18 +3313,17 @@
     if (inLetter >= 0) {
       const bulletEnd = wordCount >= 0 ? wordCount : (remember >= 0 ? remember : text.length);
       let block = backupTextClean(text.slice(inLetter, bulletEnd));
-      block = block.replace(/^In your (?:letter|email|message)\s*/iu, '');
-      bullets = block.split(/\s+-\s+(?=[A-Za-z])/u).map(backupTextClean).filter(Boolean);
-      if (bullets.length === 1) {
-        bullets = block.split(/\s+[–−]\s+(?=[A-Za-z])/u).map(backupTextClean).filter(Boolean);
-      }
+      block = block.replace(/^In your (?:letter|email|message)\s*:?\s*/iu, '');
+      bullets = block.split(/\s+[-–−]\s+(?=[A-Za-z])/u).map(backupTextClean).filter(Boolean);
     }
-    const wordLine = wordCount >= 0 ? backupTextClean((text.slice(wordCount).match(/^Write\s+\d+\s*[–-]\s*\d+\s+words\.?/iu) || [])[0] || '') : '';
+    const wordLine = wordCount >= 0
+      ? backupTextClean((text.slice(wordCount).match(/^Write\s+\d+\s*[–-]\s*\d+\s+words\.?/iu) || [])[0] || '')
+      : '';
     const rememberLine = remember >= 0 ? backupTextClean(text.slice(remember)) : '';
 
     return `
       ${intro ? `<p class="backup-writing37-action">${esc(intro)}</p>` : ''}
-      ${bullets.length ? `<div class="backup-writing37-in-letter">In your letter:</div><ul class="backup-writing37-bullets">${bullets.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${bullets.length ? `<div class="backup-writing37-in-letter">${esc(markerLabel)}</div><ul class="backup-writing37-bullets">${bullets.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
       ${wordLine ? `<p class="backup-writing37-wordline">${esc(wordLine)}</p>` : ''}
       ${rememberLine ? `<p class="backup-writing37-remember">${esc(rememberLine)}</p>` : ''}
     `;
@@ -3300,6 +3351,7 @@
       <section class="backup-learning-section backup-writing-letter-section">
         <span class="backup-block-label">ПИСЬМО</span>
         ${writing.letterLead ? `<div class="backup-writing-letter-lead">${esc(writing.letterLead)}</div>` : ''}
+        ${writing.letterMeta?.length ? `<div class="backup-writing-letter-lead">${writing.letterMeta.map(line => `<div>${esc(line)}</div>`).join('')}</div>` : ''}
         <div class="backup-writing-letter-quote">${esc(writing.letterQuote || writing.letter)}</div>
       </section>
       ${renderWritingAnswerArea(writing.answerTitle, 'Напишите ответ здесь…')}
@@ -3320,25 +3372,37 @@
 
   function writing38TableRows(item) {
     const rows = structuredTableRows(item?.item_tables || []);
-    const headerIndex = rows.findIndex(row => row.length >= 2
-      && /^Reasons$/iu.test(backupTextClean(row[0]))
-      && /Number of respondents/iu.test(backupTextClean(row[1])));
-    if (headerIndex < 0) return [];
-    const out = [rows[headerIndex]];
-    for (let i = headerIndex + 1; i < rows.length && out.length < 8; i += 1) {
-      const row = rows[i];
-      if (row.length !== 2) break;
-      if (!/^\d+(?:[.,]\d+)?%?$/u.test(backupTextClean(row[1]))) break;
-      out.push(row);
+    const numeric = value => /^\d+(?:[.,]\d+)?%?$/u.test(backupTextClean(value));
+
+    // FIPI uses many different table headers in task 38:
+    // Options / Reasons / Places / Advantages / Item of expenditure / etc.
+    // Detect the table by structure instead of one literal header:
+    // header row + at least 3 consecutive two-cell rows with numeric values.
+    for (let i = 0; i < rows.length; i += 1) {
+      const header = rows[i];
+      if (header.length < 2) continue;
+
+      const data = [];
+      for (let j = i + 1; j < rows.length; j += 1) {
+        const row = rows[j];
+        if (row.length !== 2 || !numeric(row[1])) break;
+        data.push(row);
+        if (data.length >= 10) break;
+      }
+      if (data.length >= 3) return [header, ...data];
     }
-    return out.length >= 3 ? out : [];
+    return [];
   }
 
   function splitWriting38Segments(value) {
     const text = stripGenericExpandedAnswerLead(value);
     if (!text) return [];
-    const starts = [...text.matchAll(/\bImagine that you are doing a project on\b/giu)].map(m => m.index ?? 0);
+
+    // Covers all modern FIPI wordings:
+    // “project on ...”, “project called ...”, and “project “Family budget...””.
+    const starts = [...text.matchAll(/\bImagine that you are doing a project\b/giu)].map(m => m.index ?? 0);
     if (!starts.length) return [text];
+
     const segments = [];
     for (let i = 0; i < starts.length; i += 1) {
       const end = i + 1 < starts.length ? starts[i + 1] : text.length;
@@ -3348,14 +3412,25 @@
     return segments;
   }
 
+  function writing38StripInlineTable(prompt, tableRows = []) {
+    let text = backupTextClean(prompt);
+    if (!text || !tableRows.length || tableRows[0].length < 2) return text;
+
+    const escapeRx = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const header = tableRows[0].slice(0, 2).map(backupTextClean);
+    const rx = new RegExp(`${escapeRx(header[0])}\\s+${escapeRx(header[1])}`, 'iu');
+    const match = rx.exec(text);
+    if (match) text = backupTextClean(text.slice(0, match.index));
+    return text;
+  }
+
   function writing38AlternativeModel(segment, tableRows = []) {
     let text = backupTextClean(segment);
     const writeIndex = text.search(/\bWrite\s+200\s*[–-]\s*250\s+words\./iu);
     let prompt = backupTextClean(writeIndex >= 0 ? text.slice(0, writeIndex) : text);
     let requirements = backupTextClean(writeIndex >= 0 ? text.slice(writeIndex) : '');
 
-    const reasonsIndex = prompt.search(/\bReasons\s+Number of respondents\s*\(%\)/iu);
-    if (reasonsIndex >= 0) prompt = backupTextClean(prompt.slice(0, reasonsIndex));
+    prompt = writing38StripInlineTable(prompt, tableRows);
 
     const planIndex = requirements.search(/\bUse the following plan:/iu);
     const wordLine = backupTextClean(planIndex >= 0 ? requirements.slice(0, planIndex) : requirements);
