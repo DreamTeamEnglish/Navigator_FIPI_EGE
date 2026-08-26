@@ -7,6 +7,7 @@
   // v0.6.3 HYBRID — common EGE catalog may come from private Yandex Object Storage.
   // Supabase remains the live source for Auth/access, statuses and manual topic overrides.
   const EGE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-delivery`;
+  const EGE_MEDIA_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-media-delivery`;
   const EGE_CATALOG_DB_NAME = 'ege-protected-catalog-v1';
   const EGE_CATALOG_DB_VERSION = 1;
   const EGE_CATALOG_STORE = 'catalogs';
@@ -3525,7 +3526,7 @@
     return payload;
   }
 
-  async function gatewayFetchMedia(mediaId) {
+  async function legacyGatewayFetchMediaBlob(mediaId) {
     const { data } = await supabaseClient.auth.getSession();
     const token = data?.session?.access_token;
     if (!token) throw new Error('Сессия Supabase не найдена.');
@@ -3539,29 +3540,120 @@
     return await response.blob();
   }
 
+  async function requestDirectEgeMedia(mediaId) {
+    const { data } = await supabaseClient.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) {
+      throw Object.assign(new Error('Сессия Supabase не найдена.'), { authFailure: true });
+    }
+
+    let response;
+    try {
+      response = await fetch(
+        `${EGE_MEDIA_DELIVERY_FUNCTION_URL}?media_id=${encodeURIComponent(mediaId)}`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            apikey: configuredKey()
+          },
+          cache: 'no-store'
+        }
+      );
+    } catch (error) {
+      throw Object.assign(
+        new Error(`ege-media-delivery network error: ${error?.message || error}`),
+        { technicalFailure: true }
+      );
+    }
+
+    let payload = null;
+    try { payload = await response.json(); } catch { payload = null; }
+
+    if (response.status === 401 || response.status === 403) {
+      throw Object.assign(
+        new Error(payload?.error || `ege-media-delivery HTTP ${response.status}`),
+        { authFailure: true }
+      );
+    }
+
+    if (!response.ok || !payload?.media?.url) {
+      throw Object.assign(
+        new Error(payload?.error || `ege-media-delivery HTTP ${response.status}`),
+        { technicalFailure: true }
+      );
+    }
+
+    // Tiny Range probe confirms that the signed URL and Object Storage CORS are
+    // actually usable before the viewer adopts the direct URL.
+    const probe = await fetch(payload.media.url, {
+      headers: { Range: 'bytes=0-0' },
+      cache: 'no-store'
+    });
+    if (!(probe.status === 206 || probe.status === 200)) {
+      throw Object.assign(
+        new Error(`Object Storage media probe HTTP ${probe.status}`),
+        { technicalFailure: true }
+      );
+    }
+
+    return {
+      url: payload.media.url,
+      objectKey: payload.media.object_key || '',
+      contentType: payload.media.content_type || '',
+      direct: true
+    };
+  }
+
+  async function resolveBackupMediaSource(mediaId) {
+    try {
+      const direct = await requestDirectEgeMedia(mediaId);
+      console.info(`EGE media ${mediaId}: Object Storage direct`);
+      return direct;
+    } catch (error) {
+      if (error?.authFailure) throw error;
+
+      console.warn(
+        `EGE media ${mediaId}: Object Storage unavailable; legacy Yandex.Disk fallback`,
+        error
+      );
+
+      const blob = await legacyGatewayFetchMediaBlob(mediaId);
+      const objectUrl = URL.createObjectURL(blob);
+      activeBackupObjectUrls.push(objectUrl);
+
+      console.info(`EGE media ${mediaId}: legacy Yandex.Disk fallback`);
+      return {
+        url: objectUrl,
+        objectKey: '',
+        contentType: blob.type || '',
+        direct: false
+      };
+    }
+  }
+
   async function loadBackupMedia(mediaId) {
     const m = mediaById.get(mediaId);
     const slot = el.backupTaskBody.querySelector(`[data-backup-media-slot="${CSS.escape(mediaId)}"]`);
     if (!m || !slot || slot.dataset.loaded === '1') return;
 
     try {
-      const blob = await gatewayFetchMedia(mediaId);
-      const objectUrl = URL.createObjectURL(blob);
-      activeBackupObjectUrls.push(objectUrl);
+      const source = await resolveBackupMediaSource(mediaId);
       slot.dataset.loaded = '1';
+      slot.dataset.mediaSource = source.direct ? 'object-storage' : 'legacy-yandex-disk';
 
       if (m.kind === 'image') {
-        slot.innerHTML = `<img src="${esc(objectUrl)}" alt="Изображение задания">`;
+        slot.innerHTML = `<img src="${esc(source.url)}" alt="Изображение задания">`;
       } else if (m.kind === 'audio') {
-        slot.innerHTML = `<audio controls preload="metadata" src="${esc(objectUrl)}"></audio><div class="backup-print-media-note">Аудио к заданию доступно в электронной версии Navigator.</div>`;
+        slot.innerHTML = `<audio controls preload="metadata" src="${esc(source.url)}"></audio><div class="backup-print-media-note">Аудио к заданию доступно в электронной версии Navigator.</div>`;
       } else if (m.kind === 'video') {
-        slot.innerHTML = `<video controls preload="metadata" src="${esc(objectUrl)}"></video><div class="backup-print-media-note">Видео к заданию доступно в электронной версии Navigator.</div>`;
+        slot.innerHTML = `<video controls preload="metadata" src="${esc(source.url)}"></video><div class="backup-print-media-note">Видео к заданию доступно в электронной версии Navigator.</div>`;
       } else {
-        slot.innerHTML = `<a class="button secondary wide backup-media-open" href="${esc(objectUrl)}" target="_blank" rel="noopener noreferrer">Открыть media</a><div class="backup-print-media-note">Дополнительный media-файл доступен в электронной версии Navigator.</div>`;
+        slot.innerHTML = `<a class="button secondary wide backup-media-open" href="${esc(source.url)}" target="_blank" rel="noopener noreferrer">Открыть media</a><div class="backup-print-media-note">Дополнительный media-файл доступен в электронной версии Navigator.</div>`;
       }
     } catch (error) {
       console.error('Backup media load failed:', error);
-      slot.innerHTML = `<div class="backup-media-error">Не удалось загрузить media с Яндекс Диска.<br>${esc(error?.message || error)}</div>`;
+      slot.innerHTML = `<div class="backup-media-error">Не удалось загрузить media из защищённого резерва.<br>${esc(error?.message || error)}</div>`;
     }
   }
 
