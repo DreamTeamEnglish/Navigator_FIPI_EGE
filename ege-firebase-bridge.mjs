@@ -29,7 +29,11 @@ export function createEgeFirebaseBridge({ auth, ops, accessUrl, fetchImpl = fetc
     principal_key: `auth:${row.firebase_uid}`, role: row.role, status: row.ege_status,
     access_level: row.ege_access_level, access_expires_at: row.ege_access_expires_at,
     access_source: row.ege_access_source, email: row.email, display_name: row.display_name,
-    last_login_at: null, created_at: null,
+    first_seen_at: row.firebase_last_login_at || null,
+    last_seen_at: row.firebase_last_login_at || null,
+    login_count: row.firebase_last_login_at ? 1 : 0,
+    last_login_at: row.firebase_last_login_at || null,
+    created_at: row.firebase_created_at || null,
   });
 
   async function rpc(name, args = {}) {
