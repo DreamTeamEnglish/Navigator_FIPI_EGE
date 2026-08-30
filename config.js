@@ -1,6 +1,9 @@
-window.OGE_CONFIG = {
-  supabaseUrl: "https://cyskqzsrcoxgxhidmkng.supabase.co",
-  supabasePublishableKey: "sb_publishable_ytgvq6TXmL8EawP4W6G8aA_jukEDyuw",
-  supabaseAnonKey: "",
-  allowTeacherSignUp: true
+window.EGE_CONFIG = {
+  authProvider: "firebase",
+  firebase: {
+    apiKey: "AIzaSyASkYQ2AEDHo0acJx6oKzYFkldgF715Ndw",
+    authDomain: "dte-auth-pilot.firebaseapp.com",
+    projectId: "dte-auth-pilot"
+  },
+  firebaseAccessUrl: "https://functions.yandexcloud.net/d4evsrhgcg55dmpvhts5"
 };

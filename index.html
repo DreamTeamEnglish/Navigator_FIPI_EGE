@@ -217,7 +217,7 @@
       <section id="emailRecoveryOption" class="email-recovery-option hidden">
         <div>
           <strong>Восстановить через email</strong>
-          <span>Для приглашённого пользователя с настоящим email можно получить письмо Supabase со ссылкой на смену пароля.</span>
+          <span>Для приглашённого пользователя с настоящим email можно получить письмо Firebase со ссылкой на смену пароля.</span>
         </div>
         <button id="sendEmailRecoveryButton" class="button secondary" type="button">Отправить письмо</button>
       </section>
@@ -238,7 +238,7 @@
            data-admin-recovery-contact>✉ Напишите администратору</a>
       </div>
 
-      <p class="managed-auth-note">Если EGE был добавлен к уже существующему аккаунту, пароль Supabase Auth может использоваться и в других ваших Navigator.</p>
+      <p class="managed-auth-note">Если EGE добавлен к существующему аккаунту, тот же пароль Firebase действует в ОГЭ и ЕГЭ.</p>
     </div>
   </dialog>
 
@@ -247,7 +247,7 @@
       <button id="cancelEmailResetPasswordButton" class="dialog-close" type="button" aria-label="Отменить">×</button>
       <span class="gold-kicker">EMAIL RECOVERY · EGE</span>
       <h3>Создайте новый пароль</h3>
-      <p>Ссылка из письма подтверждена. Придумайте новый пароль для вашего Supabase Auth-аккаунта.</p>
+      <p>Ссылка из письма подтверждена. Придумайте новый общий пароль Firebase.</p>
       <label><span>Новый пароль</span><input id="emailResetPasswordInput" type="password" autocomplete="new-password" placeholder="Не менее 10 символов"></label>
       <label><span>Повторите пароль</span><input id="emailResetPasswordRepeat" type="password" autocomplete="new-password" placeholder="Повторите пароль"></label>
       <div id="emailResetPasswordError" class="auth-error hidden"></div>
@@ -404,13 +404,13 @@
             <button id="createEmailAccessButton" class="button secondary" type="button">+ Email-доступ</button>
           </div>
           <div class="admin-create-access-card">
-            <div><strong>VK ID-доступ</strong><span>Если этот VK ID уже подключён к ОГЭ, используется тот же Supabase Auth — второй пользователь не создаётся.</span></div>
+            <div><strong>VK ID-доступ</strong><span>Если этот VK ID уже подключён к ОГЭ, используется тот же Firebase-аккаунт — второй пользователь не создаётся.</span></div>
             <button id="createVkAccessButton" class="button secondary" type="button">+ VK-доступ</button>
           </div>
         </div>
         <div class="admin-panel-note">
           Здесь остаются все пользователи EGE: входившие хотя бы раз и приглашённые, которые ещё не входили. Права ЕГЭ хранятся отдельно от ОГЭ.
-          <br><strong>Важно:</strong> кнопка «Сбросить пароль» меняет пароль общего Supabase Auth. Если этот же Auth используется в ОГЭ, временный/новый пароль будет общим для обоих Navigator.
+          <br><strong>Важно:</strong> кнопка «Сбросить пароль» меняет общий пароль Firebase для ОГЭ и ЕГЭ.
         </div>
         <div id="participantsList" class="admin-user-list"></div>
       </section>
@@ -430,7 +430,7 @@
       <button id="closeEmailAccessAdminDialogButton" class="dialog-close" type="button" aria-label="Закрыть">×</button>
       <span class="gold-kicker">EGE ADMIN · EMAIL ACCESS</span>
       <h3>Создать доступ по email</h3>
-      <p>Если аккаунт уже существует в Supabase Auth, Navigator просто добавит ему право EGE — пароль не изменится.</p>
+      <p>Если аккаунт уже существует в Firebase, Navigator просто добавит ему право EGE — пароль не изменится.</p>
       <label><span>Имя · необязательно</span><input id="emailAccessNameInput" type="text" maxlength="160" placeholder="Анна Иванова"></label>
       <label><span>Email</span><input id="emailAccessEmailInput" type="email" placeholder="teacher@example.com"></label>
       <label><span>Уровень доступа</span><select id="emailAccessLevelSelect"><option value="full">FULL · полный каталог</option><option value="demo">DEMO</option></select></label>
@@ -533,8 +533,10 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=072-old-new-format-1"></script>
+  <script type="module">
+    await import('./ege-firebase-bridge.mjs?v=ege-firebase-1');
+    await import('./app.js?v=073-firebase-1');
+  </script>
 </body>
 </html>

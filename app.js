@@ -7,11 +7,11 @@
   // v0.7.2 — OLD/NEW FORMAT BADGES + FILTER. STRICT NO-PROXY preserved.
   window.__EGE_FRONTEND_BUILD__ = '0.7.2-old-new';
   console.info('EGE Navigator frontend build: 0.7.2-old-new');
-  // Supabase is ONLY the customs layer: Auth/access, statuses, metadata and short-lived signed URLs.
+  // Firebase provides one shared identity; Yandex Function provides EGE rights and signed URLs.
   // Catalog, media and vocabulary cache bytes are fetched DIRECTLY by the browser from Yandex Object Storage.
-  const EGE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-delivery`;
-  const EGE_MEDIA_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-media-delivery`;
-  const EGE_CACHE_DELIVERY_FUNCTION_URL = `${String(CONFIG.supabaseUrl || '').replace(/\/+$/, '')}/functions/v1/ege-cache-delivery`;
+  const EGE_DELIVERY_FUNCTION_URL = String(CONFIG.firebaseAccessUrl || '');
+  const EGE_MEDIA_DELIVERY_FUNCTION_URL = String(CONFIG.firebaseAccessUrl || '');
+  const EGE_CACHE_DELIVERY_FUNCTION_URL = String(CONFIG.firebaseAccessUrl || '');
   const EGE_CATALOG_DB_NAME = 'ege-protected-catalog-v1';
   const EGE_CATALOG_DB_VERSION = 1;
   const EGE_CATALOG_STORE = 'catalogs';
@@ -282,11 +282,11 @@
   };
 
   function configuredKey() {
-    return CONFIG.supabasePublishableKey || CONFIG.supabaseAnonKey || '';
+    return CONFIG.firebase?.apiKey || '';
   }
 
   function isConfigured() {
-    return Boolean(CONFIG.supabaseUrl && configuredKey() && window.supabase?.createClient);
+    return Boolean(CONFIG.authProvider === 'firebase' && CONFIG.firebaseAccessUrl && !CONFIG.firebaseAccessUrl.includes('PASTE_') && configuredKey() && window.supabase?.createClient);
   }
 
   function esc(value) {
@@ -353,8 +353,7 @@
   }
 
   function managedAccessFunctionUrl() {
-    const root = String(CONFIG.supabaseUrl || '').replace(/\/+$/, '');
-    return root ? `${root}/functions/v1/ege-managed-access` : '';
+    return String(CONFIG.firebaseAccessUrl || '');
   }
 
   async function currentAccessToken() {
@@ -371,14 +370,20 @@
 
     const headers = {
       'Content-Type': 'application/json',
-      'apikey': configuredKey(),
+      ...(token ? { 'X-Firebase-Token': token } : {}),
     };
-    if (token) headers.Authorization = `Bearer ${token}`;
 
+    const translated = body.action === 'admin_reset_password'
+      ? { action:'reset-password', firebase_uid:body.auth_user_id }
+      : body.action === 'create_email_access'
+        ? { action:'create-access', user:{ login_kind:'email', login_label:body.email, display_name:body.display_name, access_level:body.access_level, access_expires_at:body.access_expires_at, access_source:'invite' } }
+        : body.action === 'create_vk_access'
+          ? { action:'create-access', user:{ login_kind:'vk_manual', login_label:body.vk_user_id, display_name:body.display_name, access_level:body.access_level, access_expires_at:body.access_expires_at, access_source:body.source } }
+          : body;
     const response = await fetch(managedAccessFunctionUrl(), {
       method:'POST',
       headers,
-      body:JSON.stringify(body),
+      body:JSON.stringify(translated),
     });
 
     let payload = null;
@@ -391,6 +396,11 @@
       error.retryAfterSeconds = Number(payload?.retry_after_seconds || 0);
       throw error;
     }
+    if (body.action === 'admin_reset_password') {
+      const row = adminUsers.find(item => extractAuthUserId(item.principal_key) === body.auth_user_id) || {};
+      return { ...payload, mode:'admin_reset', kind:row.managed_login_kind === 'vk_manual' ? 'vk' : 'email', vk_user_id:row.managed_vk_user_id, email:row.managed_email || row.email, display_name:userDisplayName(row), temporary_password:payload.temporary_password };
+    }
+    if (body.action === 'create_email_access' || body.action === 'create_vk_access') return { ...payload.user, kind:payload.user.login_kind === 'vk_manual' ? 'vk' : 'email' };
     return payload;
   }
 
@@ -479,8 +489,8 @@
   }
 
   function extractAuthUserId(principalKey) {
-    const m = String(principalKey || '').match(/^auth:([0-9a-f-]{36})$/i);
-    return m ? m[1].toLowerCase() : '';
+    const m = String(principalKey || '').match(/^auth:([A-Za-z0-9_-]{1,128})$/);
+    return m ? m[1] : '';
   }
 
   function effectiveContentSource() {
@@ -1229,8 +1239,7 @@
       response = await fetch(EGE_DELIVERY_FUNCTION_URL, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'apikey': configuredKey()
+          'X-Firebase-Token': token
         },
         cache: 'no-store'
       });
@@ -2272,7 +2281,7 @@
     const approved = window.confirm(
       `Сбросить пароль для ${label}?\n\n` +
       `Будет создан новый временный пароль. Старый recovery-код EGE станет недействительным.\n\n` +
-      `ВАЖНО: пароль относится к общему Supabase Auth. Если этот же аккаунт используется в ОГЭ, временный/новый пароль будет общим для ОГЭ и ЕГЭ.`
+      `ВАЖНО: пароль относится к общему Firebase-входу и будет общим для ОГЭ и ЕГЭ.`
     );
     if (!approved) return;
 
@@ -2316,7 +2325,7 @@
 
     if (result.mode === 'admin_reset') {
       const login = result.kind === 'vk' ? `VK ID: ${result.vk_user_id}` : `Email: ${result.email}`;
-      return `${hello}\n\nДля вашего доступа к EGE Navigator создан новый временный пароль.\n${login}\nВременный пароль: ${result.temporary_password}\n\nОткройте Navigator: ${window.location.origin}${window.location.pathname}\n\nВойдите с временным паролем. Navigator попросит придумать свой постоянный пароль и выдаст новый код восстановления. Сохраните этот код.\n\nЕсли вы используете этот же аккаунт в OGE Navigator, пароль Supabase Auth общий для обоих Navigator.`;
+      return `${hello}\n\nДля вашего доступа к EGE Navigator создан новый временный пароль.\n${login}\nВременный пароль: ${result.temporary_password}\n\nОткройте Navigator: ${window.location.origin}${window.location.pathname}\n\nВойдите с временным паролем. Navigator попросит придумать свой постоянный пароль.\n\nПароль Firebase общий для ОГЭ и ЕГЭ.`;
     }
     if (result.kind === 'email') {
       if (result.existing_auth) {
@@ -3912,10 +3921,10 @@
     const { data } = await supabaseClient.auth.getSession();
     const token = data?.session?.access_token;
     if (!token) {
-      throw Object.assign(new Error('Сессия Supabase не найдена.'), { authFailure: true });
+      throw Object.assign(new Error('Сессия Firebase не найдена.'), { authFailure: true });
     }
 
-    const params = new URLSearchParams({ kind });
+    const params = new URLSearchParams({ mode:'cache', kind });
     if (pageName) params.set('name', pageName);
 
     let response;
@@ -3923,8 +3932,7 @@
       response = await fetch(`${EGE_CACHE_DELIVERY_FUNCTION_URL}?${params.toString()}`, {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${token}`,
-          apikey: configuredKey()
+          'X-Firebase-Token': token
         },
         cache: 'no-store'
       });
@@ -4027,7 +4035,7 @@
     const { data } = await supabaseClient.auth.getSession();
     const token = data?.session?.access_token;
     if (!token) {
-      throw Object.assign(new Error('Сессия Supabase не найдена.'), { authFailure: true });
+      throw Object.assign(new Error('Сессия Firebase не найдена.'), { authFailure: true });
     }
 
     const controller = new AbortController();
@@ -4035,12 +4043,11 @@
     let response;
     try {
       response = await fetch(
-        `${EGE_MEDIA_DELIVERY_FUNCTION_URL}?media_id=${encodeURIComponent(mediaId)}`,
+        `${EGE_MEDIA_DELIVERY_FUNCTION_URL}?mode=media&media_id=${encodeURIComponent(mediaId)}`,
         {
           method: 'GET',
           headers: {
-            Authorization: `Bearer ${token}`,
-            apikey: configuredKey()
+            'X-Firebase-Token': token
           },
           cache: 'no-store',
           signal: controller.signal
@@ -4358,7 +4365,7 @@
         else itemStatus.set(itemId, oldStatus);
       }
       render(false);
-      showInfo('Не удалось сохранить статус', `Supabase вернул: ${error.message || 'неизвестная ошибка'}`, 'СТАТУС');
+      showInfo('Не удалось сохранить статус', `Сервер вернул: ${error.message || 'неизвестная ошибка'}`, 'СТАТУС');
     }
   }
 
@@ -4755,13 +4762,11 @@
 
     el.saveFirstPasswordButton.disabled = true;
     try {
-      const result = await callManagedAccess({
-        action:'set_first_password',
-        new_password:password,
-      }, { requireAuth:true });
-
+      const { error } = await supabaseClient.auth.updateUser({ password });
+      if (error) throw error;
       if (currentManagedAuth) currentManagedAuth.must_change_password = false;
-      showRecoveryCode(result.recovery_code, 'activate');
+      if (el.firstPasswordDialog?.open) el.firstPasswordDialog.close();
+      await activateUser(currentUser);
     } catch (error) {
       const text = managedAccessErrorText(error);
       if (text === 'access_ended') {
@@ -4898,7 +4903,7 @@
 
     if (!isConfigured()) {
       showMessage(
-        'Не найден рабочий config.js с подключением Supabase. config.js из вашего EGE-репозитория заменять не нужно.',
+        'Не заполнен адрес новой функции EGE в config.js.',
         'error'
       );
       el.openLoginButton.disabled = true;
