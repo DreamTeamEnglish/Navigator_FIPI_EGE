@@ -806,7 +806,7 @@
     if (managedResult.error) throw managedResult.error;
     adminManagedUsers = new Map((managedResult.data || []).map(row => [String(row.auth_user_id || '').toLowerCase(), row]));
     adminUsers = (directoryResult.data || []).map(row => {
-      const managed = adminManagedUsers.get(extractAuthUserId(row.principal_key));
+      const managed = adminManagedUsers.get(extractAuthUserId(row.principal_key).toLowerCase());
       return managed ? { ...row,
         managed_login_kind: managed.login_kind,
         managed_email: managed.email,
@@ -815,6 +815,10 @@
         must_change_password: managed.must_change_password,
       } : row;
     });
+    const migrationComplete = EXISTING_EGE_ACCESS_MIGRATION.every(row =>
+      adminManagedUsers.has(row.firebase_uid.toLowerCase())
+    );
+    el.importExistingEgeAccessButton?.classList.toggle('hidden', migrationComplete);
     renderAdminParticipants();
   }
 
