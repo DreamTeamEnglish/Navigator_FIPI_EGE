@@ -49,6 +49,7 @@ export function createEgeFirebaseBridge({ auth, ops, accessUrl, fetchImpl = fetc
     if (name === 'ege_admin_set_content_source') return (await request({}, { action: 'set-runtime', runtime: { content_source: args.p_source } })).runtime.content_source;
     if (name === 'ege_admin_set_backup_ready') return (await request({}, { action: 'set-runtime', runtime: { yandex_backup_ready: Boolean(args.p_ready) } })).runtime.yandex_backup_ready;
     if (name === 'ege_admin_set_principal_access') { const uid = String(args.p_principal_key || '').replace(/^auth:/, ''); await request({}, { action: 'update-ege-access', user: { firebase_uid: uid, status: args.p_status, access_level: args.p_access_level, access_expires_at: args.p_access_expires_at } }); return true; }
+    if (name === 'ege_admin_import_existing_access') return (await request({}, { action: 'import-ege-access', users: args.p_users })).result;
     if (name === 'ege_admin_save_topic_override') { await request({}, { action: 'save-topic-override', override: { unit_id: args.p_unit_id, mode: args.p_mode, topic_ids: args.p_topic_ids, note: args.p_note } }); snapshot = null; return true; }
     if (name === 'ege_admin_reset_topic_override') { await request({}, { action: 'reset-topic-override', unit_id: args.p_unit_id }); snapshot = null; return true; }
     throw new Error(`Unsupported Firebase RPC: ${name}`);

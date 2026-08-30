@@ -112,6 +112,20 @@
   let editingPrincipalKey = null;
   let presenceTimer = null;
   let adminRefreshTimer = null;
+
+  const EXISTING_EGE_ACCESS_MIGRATION = Object.freeze([
+    { firebase_uid:'X14uBvI8uJRRkovC21gMPqpxyQQ2', status:'active', access_level:'full', access_expires_at:null, access_source:'admin' },
+    { firebase_uid:'EiQuQTKzBOWxJreqOF9SLsPoIT73', status:'active', access_level:'full', access_expires_at:null, access_source:'donut' },
+    { firebase_uid:'WOm424N6wbW0Svw5QJSNntUURhH3', status:'active', access_level:'full', access_expires_at:null, access_source:'donut' },
+    { firebase_uid:'VdCwLpAKDqWH6upIsCrDMjzYBYC3', status:'active', access_level:'full', access_expires_at:null, access_source:'donut' },
+    { firebase_uid:'IOytdvelOsMrIZXP96l54tg84j62', status:'active', access_level:'full', access_expires_at:null, access_source:'donut' },
+    { firebase_uid:'4nERYrJyQ4Y1YFWDcDuQnnrmkb02', status:'active', access_level:'full', access_expires_at:null, access_source:'donut' },
+    { firebase_uid:'imoEINFdqsMrWhG38bd8Vvism7P2', status:'active', access_level:'full', access_expires_at:null, access_source:'donut' },
+    { firebase_uid:'tj4Dl2bOa8QXcGsENmodkVAGwzJ2', status:'active', access_level:'full', access_expires_at:null, access_source:'donut' },
+    { firebase_uid:'L3fQtItj6fUno1qG9rngclsBndI3', status:'active', access_level:'full', access_expires_at:null, access_source:'invite' },
+    { firebase_uid:'O7gi1j6lBWXZVTS88swIeptcary2', status:'pending', access_level:'full', access_expires_at:null, access_source:'invite' },
+    { firebase_uid:'B9zt6YLItlNv4fFVIT7SaWz8FiV2', status:'active', access_level:'full', access_expires_at:null, access_source:'donut' },
+  ]);
   let toastTimer = null;
 
   const $ = (s) => document.querySelector(s);
@@ -245,6 +259,7 @@
     adminBackupReadyButton: $('#adminBackupReadyButton'),
 
     createEmailAccessButton: $('#createEmailAccessButton'),
+    importExistingEgeAccessButton: $('#importExistingEgeAccessButton'),
     createVkAccessButton: $('#createVkAccessButton'),
     emailAccessAdminDialog: $('#emailAccessAdminDialog'),
     closeEmailAccessAdminDialogButton: $('#closeEmailAccessAdminDialogButton'),
@@ -801,6 +816,24 @@
       } : row;
     });
     renderAdminParticipants();
+  }
+
+  async function importExistingEgeAccess() {
+    if (currentAccess?.role !== 'admin' || !el.importExistingEgeAccessButton) return;
+    if (!window.confirm('Назначить прежние права ЕГЭ 11 существующим Firebase-пользователям? Аккаунты, пароли и права ОГЭ не изменятся.')) return;
+    el.importExistingEgeAccessButton.disabled = true;
+    try {
+      const { data, error } = await supabaseClient.rpc('ege_admin_import_existing_access', { p_users: EXISTING_EGE_ACCESS_MIGRATION });
+      if (error) throw error;
+      await refreshAdminParticipants();
+      if (Number(data?.failed || 0) > 0) throw new Error(`Перенесено ${data.updated}; ошибок: ${data.failed}`);
+      el.importExistingEgeAccessButton.textContent = `✓ Перенесено: ${data.updated}`;
+      showToast(`✓ Права ЕГЭ перенесены: ${data.updated}`);
+    } catch (error) {
+      console.error('EGE access import failed:', error);
+      showToast(error?.message || 'Не удалось перенести права ЕГЭ.');
+      el.importExistingEgeAccessButton.disabled = false;
+    }
   }
 
   async function refreshAdminOnline() {
@@ -5072,6 +5105,7 @@
   el.adminBackupReadyButton?.addEventListener('click', toggleBackupReady);
 
   el.createEmailAccessButton?.addEventListener('click', openEmailAccessAdminDialog);
+  el.importExistingEgeAccessButton?.addEventListener('click', importExistingEgeAccess);
   el.createVkAccessButton?.addEventListener('click', openVkAccessAdminDialog);
   el.closeEmailAccessAdminDialogButton?.addEventListener('click', () => el.emailAccessAdminDialog.close());
   el.closeVkAccessAdminDialogButton?.addEventListener('click', () => el.vkAccessAdminDialog.close());
