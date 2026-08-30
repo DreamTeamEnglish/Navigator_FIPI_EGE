@@ -689,7 +689,7 @@
           <div class="admin-user-name" title="${esc(userDisplayName(row))}">${esc(userDisplayName(row))}</div>
           <div class="admin-user-id">${esc(row.managed_vk_user_id ? `VK ID ${row.managed_vk_user_id}` : (row.email || row.principal_key))}</div>
           <div class="admin-user-chips">
-            ${accessChip(row.managed_login_kind === 'vk' ? 'VK ID' : (row.managed_login_kind === 'email' ? 'EMAIL' : row.identity_type))}
+            ${accessChip(['vk','vk_manual'].includes(row.managed_login_kind) ? 'VK DONUT' : (row.managed_login_kind === 'email' ? 'EMAIL' : row.identity_type))}
             ${accessChip(accessSourceLabel(row.access_source))}
             ${row.must_change_password ? '<span class="admin-chip pending">TEMP PASSWORD</span>' : ''}
             ${accessChip(row.access_level)}
@@ -4426,6 +4426,7 @@
     el.accessGate.classList.add('hidden');
     el.appShell.classList.remove('hidden');
     el.signOutButton.classList.remove('hidden');
+    el.signOutButton.textContent = 'Выйти';
     el.cloudBadge.textContent = access.role === 'admin' ? 'ADMIN · FULL' : 'FULL';
     el.cloudBadge.className = 'cloud-badge live';
     el.adminButton.classList.toggle('hidden', access.role !== 'admin');
